@@ -2,6 +2,11 @@ import noise
 import numpy as np
 import random
 
+def generate_robot_matrix(n):
+ 
+    return [[0 for i in range(n)] for j in range(n)]
+
+
 def generate_random_island(n, use_perlin_noise=True):
     if use_perlin_noise:
         print ("Perlin Noise On")
@@ -28,7 +33,7 @@ def generate_random_island(n, use_perlin_noise=True):
         return [[random.randint(1, 3) for i in range(n)] for j in range(n)]
 
 
-def print_island(array_2d):
+def print_matrix(array_2d):
     for row in array_2d:
         print(' '.join(str(cell) for cell in row))
 
@@ -39,11 +44,27 @@ def is_coordinate_in_range(n, x, y):
         return False
     return True
 
-def main():
-    n = 10  # configurable parameter, change as needed
+def generate_fake_fitness():
+    return random.randint(0, 100)
+
+def initialize_game():
+    map_size = 3  # configurable parameter, change as needed
+    simulation_steps = 100
     use_perlin_noise = True  # set to False to use random integer generation instead
-    array_2d = generate_random_island(n, use_perlin_noise)
-    print_island(array_2d)
+    game_world = generate_random_island(map_size, use_perlin_noise)
+    fitness_matrix = generate_robot_matrix (map_size)
+
+    print ("Map size = " + str(map_size))
+    print ("Simulation Steps:" + str(simulation_steps))
+    print ("Game World:")
+    print_matrix(game_world)
+    print ("\n")
+    print ("Final Map State")
+    print_matrix(fitness_matrix)
+
+
+def main():
+    initialize_game()
 
 if __name__ == "__main__":
     main()
