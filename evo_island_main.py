@@ -18,18 +18,25 @@ def generate_agent_matrix(n):#Initialize empty agent matrix
  
     return [[0 for j in range(n)] for i in range(n)]
 
-def generate_random_island(n, use_perlin_noise=True): #Generate a random island map, with or without structure
+def generate_random_island(n, use_perlin_noise=True, randomize_params=True):
     if use_perlin_noise:
-        scale = 100.0  # adjust this parameter to change the "roughness" of the terrain
-        octaves = 6    # adjust this parameter to change the level of detail in the terrain
-        persistence = 0.5  # adjust this parameter to change the balance of high and low terrain
-        lacunarity = 2.0    # adjust this parameter to change the level of detail in the terrain
+        if randomize_params:
+            scale = random.uniform(50, 200)
+            octaves = random.randint(4, 8)
+            persistence = random.uniform(0.4, 0.7)
+            lacunarity = random.uniform(1.8, 2.2)
+        else:
+            scale = 100.0  # adjust this parameter to change the "roughness" of the terrain
+            octaves = 6    # adjust this parameter to change the level of detail in the terrain
+            persistence = 0.5  # adjust this parameter to change the balance of high and low terrain
+            lacunarity = 2.0    # adjust this parameter to change the level of detail in the terrain
 
         # Generate Perlin noise values for each cell in the array
         world = np.zeros((n, n))
         for i in range(n):
             for j in range(n):
-                world[i][j] = noise.pnoise2(i/scale, j/scale, octaves=octaves, persistence=persistence, lacunarity=lacunarity, repeatx=n, repeaty=n, base=0)
+                world[i][j] = noise.pnoise2(i/scale, j/scale, octaves=octaves, persistence=persistence, 
+                                            lacunarity=lacunarity, repeatx=n, repeaty=n, base=0)
 
         # Scale and shift the values to the range [1, 3]
         world = (world - np.min(world)) * (3-1)/(np.max(world)-np.min(world)) + 1
@@ -43,6 +50,10 @@ def generate_random_island(n, use_perlin_noise=True): #Generate a random island 
         # Generate a random but connected path of the easiest biome starting from the top left cell
         # This is a migrational route
         curr_x, curr_y = 0, 0
+        route_width = int(n/50) # Change this parameter to change the width of the migratory route
+        branch_prob = 0.2 # Change this parameter to adjust the probability of branching
+        max_branches = 4 # Change this parameter to adjust the maximum number of branches per node
+        nodes = [(curr_x, curr_y)]  # store the current path nodes
         while True:
             # Move either right or down randomly
             if random.choice([True, False]):
@@ -52,11 +63,34 @@ def generate_random_island(n, use_perlin_noise=True): #Generate a random island 
 
             # Check if the new position is in range of the array
             if 0 <= curr_x < n and 0 <= curr_y < n:
-                # Set the cell to 1 and continue the path
-                world[curr_x][curr_y] = 1
+                # Set the cell to biome 1 and continue the path
+                for i in range(-route_width, route_width + 1):
+                    if 0 <= curr_x + i < n:
+                        world[curr_x + i][curr_y] = 1
+                
+                # Branching behavior
+                if random.random() < branch_prob and len(nodes) > 0:
+                    # Choose a random number of branches
+                    num_branches = random.randint(1, max_branches)
+                    for j in range(num_branches):
+                        # Choose a random node to branch from
+                        node = random.choice(nodes)
+                        # Choose a random direction to branch in
+                        direction = random.choice([(1,0),(-1,0),(0,1),(0,-1)])
+                        next_x, next_y = node[0] + direction[0], node[1] + direction[1]
+                        if 0 <= next_x < n and 0 <= next_y < n:
+                            # Set the cell to biome 1 and create a new branch node
+                            world[next_x][next_y] = 1
+                            nodes.append((next_x, next_y))
+                            # Randomly vary the width of the new branch
+                            branch_width = random.randint(int(route_width/2), route_width)
+                            for i in range(-branch_width, branch_width + 1):
+                                if 0 <= next_x + i < n:
+                                    world[next_x + i][next_y] = 1
             else:
                 # End the path when the end of the array is reached
                 break
+
 
         return world.astype(int).tolist()
     
@@ -173,11 +207,12 @@ def run_game():
 
     #game initialization
     # configurable parameters, change as needed
-    map_size = 500 
+    map_size = 100
     simulation_steps = 500
     use_perlin_noise = True  # set to False to use random integer generation instead
+    use_random_params = True
     agent_starting_pos = 0,0
-    game_world = generate_random_island(map_size, use_perlin_noise)
+    game_world = generate_random_island(map_size, use_perlin_noise, use_random_params)
     agent_matrix = generate_agent_matrix(map_size)
     print ("\n")
 
@@ -188,16 +223,11 @@ def run_game():
     print ("Game Parameters: ")
     print ("Map size = " + str(map_size))
     print ("Perlin Noise:" + str(use_perlin_noise))
+    print ("Random_Params:" + str(use_random_params))
     print ("Simulation Steps:" + str(simulation_steps))
     print ("\n")
     print ("Game World:")
-    #print_matrix(game_world)
     visualize_matrix(game_world)
-    print ("\n")
-    print ("Initial Agent State")
-    #print_matrix(agent_matrix)
-    visualize_matrix(agent_matrix)
-    print ("\n")
 
     #game loop here
     current_sim_step = 0
@@ -213,7 +243,6 @@ def run_game():
 
     #print final state
     print ("Final Map State")
-    #print_matrix(agent_matrix)
     visualize_matrix(agent_matrix)
        
 #main
