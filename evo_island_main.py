@@ -2,23 +2,37 @@ import noise
 import numpy as np
 import random
 import matplotlib.pyplot as plt
+import imageio
 
-level_difficulty = {1: 10, 2: 50, 3: 80}
+level_difficulty = {1: 10, 2: 60, 3: 80}
 
 def visualize_matrix(matrix):
     fig, ax = plt.subplots()
     im = ax.imshow(matrix, cmap='viridis')
-    ax.set_xticks(range(len(matrix[0])))
-    ax.set_yticks(range(len(matrix)))
-    ax.set_xticklabels(range(1, len(matrix[0])+1))
-    ax.set_yticklabels(range(1, len(matrix)+1))
     plt.show()
+
+def save_matrix_image(matrix, file_name):
+   fig, ax = plt.subplots()
+   im = ax.imshow(matrix, cmap='viridis')
+   plt.savefig(str(file_name))
+   
+
+def print_matrix(array_2d):
+    for row in array_2d:
+        print(' '.join(str(cell) for cell in row))
 
 def generate_agent_matrix(n):#Initialize empty agent matrix
  
     return [[0 for j in range(n)] for i in range(n)]
 
-def generate_random_island(n, use_perlin_noise=True, randomize_params=True):
+def generate_island(n, use_perlin_noise=True, randomize_params=True, use_migration_route=True):
+    world = generate_terrain(n, use_perlin_noise, randomize_params)
+    if use_migration_route:
+       world = generate_migration_route(n, world)
+
+    return world
+
+def generate_terrain(n, use_perlin_noise=True, randomize_params=True):
     if use_perlin_noise:
         if randomize_params:
             scale = random.uniform(50, 200)
@@ -47,7 +61,14 @@ def generate_random_island(n, use_perlin_noise=True, randomize_params=True):
         # Set the top left cell to biome 1, starting cell is always a "safe" zone. 
         world[0][0] = 1
 
-        # Generate a random but connected path of the easiest biome starting from the top left cell
+        return world.astype(int).tolist()
+    
+    else:
+        #Map is randomly generated with no structure. 
+        return [[random.randint(1, 3) for i in range(n)] for j in range(n)]
+    
+def generate_migration_route(n, world):
+   # Generate a random but connected path of the easiest biome starting from the top left cell
         # This is a migrational route
         curr_x, curr_y = 0, 0
         route_width = int(n/50) # Change this parameter to change the width of the migratory route
@@ -90,21 +111,7 @@ def generate_random_island(n, use_perlin_noise=True, randomize_params=True):
             else:
                 # End the path when the end of the array is reached
                 break
-
-
-        return world.astype(int).tolist()
-    
-    else:
-        #Map is randomly generated with no structure. 
-        return [[random.randint(1, 3) for i in range(n)] for j in range(n)]
-
-
-def print_matrix(array_2d):
-    for row in array_2d:
-        print(' '.join(str(cell) for cell in row))
-
-def isMoreFit(challenger, Occupant):
-    return challenger > Occupant
+        return world
     
 def isCoordinateInRange(n, x, y):
     if x < 0 or x >= n:
@@ -112,6 +119,9 @@ def isCoordinateInRange(n, x, y):
     if y < 0 or y >= n:
         return False
     return True
+
+def isMoreFit(challenger, Occupant):
+    return challenger > Occupant
     
 def train_new_individual():
     # generate a random number on a normal distribution
@@ -130,18 +140,18 @@ def calc_move(i,j,n, world_matrix, agent_matrix):
    #if occupied, the occupant spawns an offspring
    newIndividual = train_new_individual()
 
-   directionroll = random.randint(1, 9) #roll for which action the child will take
+   diceroll = random.randint(1, 9) #roll for which action the child will take
    #the offspring can move to an adacent valid cell, or challenge the parent for its niche
 
     #Stay at current cell and challenge parent
-   if directionroll == 1:  
+   if diceroll == 1:  
     if newIndividual > level_difficulty[world_matrix[i][j]]: #Does the new invidual meet the baseline fitness to occupy the cell?
         if isMoreFit(newIndividual,agent_matrix[i][j]): #Is the new individual's fitness higher than its parent? 
             agent_matrix[i][j] = newIndividual #new individual takes the niche.
             #or nothing happens and it dies. 
 
     #go north
-   if directionroll == 2: 
+   if diceroll == 2: 
        if isCoordinateInRange(n,i+1,j): #Is the move in range? 
           if newIndividual > level_difficulty[world_matrix[i+1][j]]: #Does the new invidual meet the baseline fitness to occupy the empty cell?
            if isMoreFit(newIndividual,agent_matrix[i+1][j]): #Does the new individual's fitness beat the fitness of the current occupant?
@@ -149,7 +159,7 @@ def calc_move(i,j,n, world_matrix, agent_matrix):
             #or nothing happens and it dies. 
        
     #go south
-   if directionroll == 3: 
+   if diceroll == 3: 
        if isCoordinateInRange(n,i-1,j): #Is the move in range?
         if newIndividual > level_difficulty[world_matrix[i-1][j]]: #Does the new invidual meet the baseline fitness to occupy the empty cell?
            if isMoreFit(newIndividual,agent_matrix[i-1][j]):
@@ -157,7 +167,7 @@ def calc_move(i,j,n, world_matrix, agent_matrix):
             #or nothing happens and it dies. 
        
     #go east
-   if directionroll == 4:  
+   if diceroll == 4:  
        if isCoordinateInRange(n,i,j+1): #Is the move in range?
         if newIndividual > level_difficulty[world_matrix[i][j+1]]: #Does the new invidual meet the baseline fitness to occupy the empty cell?
            if isMoreFit(newIndividual,agent_matrix[i][j+1]):
@@ -165,7 +175,7 @@ def calc_move(i,j,n, world_matrix, agent_matrix):
             #or nothing happens and it dies. 
 
     #go west
-   if directionroll == 5:  
+   if diceroll == 5:  
        if isCoordinateInRange(n,i,j-1): #Is the move in range?
         if newIndividual > level_difficulty[world_matrix[i][j-1]]: #Does the new invidual meet the baseline fitness to occupy the empty cell?
            if isMoreFit(newIndividual,agent_matrix[i][j-1]):
@@ -173,7 +183,7 @@ def calc_move(i,j,n, world_matrix, agent_matrix):
             #or nothing happens and it dies. 
 
     #go northeast
-   if directionroll == 6:  
+   if diceroll == 6:  
        if isCoordinateInRange(n,i+1,j+1): #Is the move in range?
         if newIndividual > level_difficulty[world_matrix[i+1][j+1]]: #Does the new invidual meet the baseline fitness to occupy the empty cell?
            if isMoreFit(newIndividual,agent_matrix[i+1][j+1]):
@@ -181,7 +191,7 @@ def calc_move(i,j,n, world_matrix, agent_matrix):
             #or nothing happens and it dies. 
 
     #go northwest
-   if directionroll == 7:  
+   if diceroll == 7:  
        if isCoordinateInRange(n,i+1,j-1): #Is the move in range?
         if newIndividual > level_difficulty[world_matrix[i+1][j-1]]: #Does the new invidual meet the baseline fitness to occupy the empty cell?
            if isMoreFit(newIndividual,agent_matrix[i+1][j-1]):
@@ -189,7 +199,7 @@ def calc_move(i,j,n, world_matrix, agent_matrix):
             #or nothing happens and it dies. 
 
     #go southeast
-   if directionroll == 8:  
+   if diceroll == 8:  
        if isCoordinateInRange(n,i-1,j+1): #Is the move in range?
         if newIndividual > level_difficulty[world_matrix[i-1][j+1]]: #Does the new invidual meet the baseline fitness to occupy the empty cell?
            if isMoreFit(newIndividual,agent_matrix[i-1][j+1]):
@@ -197,53 +207,70 @@ def calc_move(i,j,n, world_matrix, agent_matrix):
             #or nothing happens and it dies. 
 
     #go southwest
-   if directionroll == 9:  
+   if diceroll == 9:  
        if isCoordinateInRange(n,i-1,j-1): #Is the move in range?
         if newIndividual > level_difficulty[world_matrix[i-1][j-1]]: #Does the new invidual meet the baseline fitness to occupy the empty cell?
            if isMoreFit(newIndividual,agent_matrix[i-1][j-1]):
             agent_matrix[i-1][j-1] = newIndividual #new individual takes the niche.
             #or nothing happens and it dies.       
+
 def run_game():
 
-    #game initialization
+    
     # configurable parameters, change as needed
-    map_size = 100
-    simulation_steps = 500
+    map_size = 1000
+    simulation_steps = 1000
     use_perlin_noise = True  # set to False to use random integer generation instead
-    use_random_params = True
+    use_random_params = False # set to False to use preset perlin parameters
+    use_migration_route = True # set to False to remove migration routes
+
+    #game initialization
     agent_starting_pos = 0,0
-    game_world = generate_random_island(map_size, use_perlin_noise, use_random_params)
+    game_world = generate_island (map_size, use_perlin_noise, use_random_params, use_migration_route)
     agent_matrix = generate_agent_matrix(map_size)
-    print ("\n")
 
     #place initial agent
     agent_matrix[agent_starting_pos[0]][agent_starting_pos[1]] = train_new_individual()
 
-     #print initial state
+    #print initial state
     print ("Game Parameters: ")
     print ("Map size = " + str(map_size))
     print ("Perlin Noise:" + str(use_perlin_noise))
     print ("Random_Params:" + str(use_random_params))
+    print ("Migration Route:" + str(use_migration_route))
     print ("Simulation Steps:" + str(simulation_steps))
     print ("\n")
-    print ("Game World:")
+    print ("Displaying Game_World in console.")
+    print ("\n")
     visualize_matrix(game_world)
+    save_matrix_image(game_world, 'Game_World')
+    
+    frames = [] # array to save images of the heatmap
 
+    print ("Beginning Simulation...")
+    print ("\n")
     #game loop here
     current_sim_step = 0
     while (current_sim_step < simulation_steps):
         for i in range(len(agent_matrix)):
             for j in range(len(agent_matrix[0])):
-                calc_move(i,j,map_size,game_world,agent_matrix)
-        #print ("Simulation Step: " + str(current_sim_step))   
-        #print_matrix(agent_matrix)     
-        #print ("\n")
-        current_sim_step += 1
+                calc_move(i,j,map_size,game_world,agent_matrix)   
 
+        current_sim_step += 1
+        im = plt.imshow(agent_matrix, cmap='viridis')
+        frames.append(im.get_array())
+        print ("Simulation complete.") 
+        print ("\n")
+        
 
     #print final state
-    print ("Final Map State")
+    print ("Displaying Final_Map_State in console.")
     visualize_matrix(agent_matrix)
+    save_matrix_image(agent_matrix, 'Final_Game_State')
+    
+    #Create gif of execution
+    print ("Generating gif...")
+    imageio.mimsave('heatmap.gif', frames, fps=10)
        
 #main
 def main():
