@@ -204,6 +204,7 @@ def calc_move(i,j,n, world_matrix, agent_matrix):
             agent_matrix[i-1][j-1] = newIndividual #new individual takes the niche.
             #or nothing happens and it dies.       
 
+#main game loop
 def run_game():
 
     
