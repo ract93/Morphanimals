@@ -219,7 +219,7 @@ def run_game():
     
     # configurable parameters, change as needed
     map_size = 400
-    simulation_steps = 1000
+    simulation_steps = 10
     use_perlin_noise = True  # set to False to use random integer generation instead
     use_random_params = False # set to False to use preset perlin parameters
     use_migration_route = True # set to False to remove migration routes
