@@ -4,7 +4,7 @@ import random
 import matplotlib.pyplot as plt
 import imageio
 
-level_difficulty = {1: 10, 2: 40, 3: 60, 4: 80, 5: 90}
+level_difficulty = {1: 10, 2: 50, 3: 60, 4: 80, 5: 90}
 
 def visualize_matrix(matrix):
     fig, ax = plt.subplots()
@@ -28,7 +28,7 @@ def generate_agent_matrix(n):#Initialize empty agent matrix
 def generate_island(n, use_perlin_noise=True, randomize_params=True, use_migration_route=True):
     world = generate_terrain(n, use_perlin_noise, randomize_params)
     if use_migration_route:
-       world = generate_migration_route(n, world)
+       world = generate_river(n, world)
 
     return world
 
@@ -66,53 +66,43 @@ def generate_terrain(n, use_perlin_noise=True, randomize_params=True):
     else:
         #Map is randomly generated with no structure. 
         return [[random.randint(1, 3) for i in range(n)] for j in range(n)]
-    
-def generate_migration_route(n, world):
-   # Generate a random but connected path of the easiest biome starting from the top left cell
-        # This is a migrational route
-        curr_x, curr_y = 0, 0
-        route_width = int(n/50) # Change this parameter to change the width of the migratory route
-        branch_prob = 0.2 # Change this parameter to adjust the probability of branching
-        max_branches = 4 # Change this parameter to adjust the maximum number of branches per node
-        nodes = [(curr_x, curr_y)]  # store the current path nodes
-        while True:
-            # Move either right or down randomly
-            if random.choice([True, False]):
-                curr_x += 1
-            else:
-                curr_y += 1
 
-            # Check if the new position is in range of the array
-            if 0 <= curr_x < n and 0 <= curr_y < n:
-                # Set the cell to biome 1 and continue the path
-                for i in range(-route_width, route_width + 1):
-                    if 0 <= curr_x + i < n:
-                        world[curr_x + i][curr_y] = 1
-                
-                # Branching behavior
-                if random.random() < branch_prob and len(nodes) > 0:
-                    # Choose a random number of branches
-                    num_branches = random.randint(1, max_branches)
-                    for j in range(num_branches):
-                        # Choose a random node to branch from
-                        node = random.choice(nodes)
-                        # Choose a random direction to branch in
-                        direction = random.choice([(1,0),(-1,0),(0,1),(0,-1)])
-                        next_x, next_y = node[0] + direction[0], node[1] + direction[1]
-                        if 0 <= next_x < n and 0 <= next_y < n:
-                            # Set the cell to biome 1 and create a new branch node
-                            world[next_x][next_y] = 1
-                            nodes.append((next_x, next_y))
-                            # Randomly vary the width of the new branch
-                            branch_width = random.randint(int(route_width/2), route_width)
-                            for i in range(-branch_width, branch_width + 1):
-                                if 0 <= next_x + i < n:
-                                    world[next_x + i][next_y] = 1
-            else:
-                # End the path when the end of the array is reached
-                break
-        return world
-    
+from noise import pnoise2
+
+def generate_river(n, world):
+    # Generate 2D Perlin noise
+    scale = 200.0
+    octaves = 6
+    persistence = 0.4
+    lacunarity = 2.0
+    grid = [[0 for j in range(n)] for i in range(n)]
+    for i in range(n):
+        for j in range(n):
+            grid[i][j] = pnoise2(i / scale, j / scale, octaves=octaves,
+                                 persistence=persistence, lacunarity=lacunarity,
+                                 repeatx=n, repeaty=n, base=0)
+
+    # Find the maximum and minimum values in the grid
+    max_val = max(map(max, grid))
+    min_val = min(map(min, grid))
+
+    # Rescale the values in the grid to be between 0 and 1
+    scaled_grid = [[(val - min_val) / (max_val - min_val) for val in row] for row in grid]
+
+    # Define the river path as a series of points with y-values along the center of the grid
+    river_width = n // 50
+    river_path = [[i, scaled_grid[i][n//2]] for i in range(n)]
+
+    # Write the river pattern directly to the world array
+    for i in range(n):
+        for j in range(n):
+            if abs(int(river_path[i][1]*n) - j) <= river_width // 2:
+                world[i][j] = 1
+
+    # Return the world array
+    return world
+
+
 def isCoordinateInRange(n, x, y):
     if x < 0 or x >= n:
         return False
@@ -218,30 +208,32 @@ def run_game():
 
     
     # configurable parameters, change as needed
-    map_size = 400
-    simulation_steps = 10
+    map_size = 1000
+    simulation_steps = 3000
     use_perlin_noise = True  # set to False to use random integer generation instead
     use_random_params = False # set to False to use preset perlin parameters
-    use_migration_route = True # set to False to remove migration routes
+    use_rivers = True # set to False to remove rivers
 
     #game initialization
     agent_starting_pos = 0,0
-    game_world = generate_island (map_size, use_perlin_noise, use_random_params, use_migration_route)
+    game_world = generate_island (map_size, use_perlin_noise, use_random_params, use_rivers)
     agent_matrix = generate_agent_matrix(map_size)
 
     #place initial agent
-    agent_matrix[agent_starting_pos[0]][agent_starting_pos[1]] = train_new_individual()
+    #agent_matrix[agent_starting_pos[0]][agent_starting_pos[1]] = train_new_individual()
+    agent_matrix[random.randint(0, len(agent_matrix)-1)][random.randint(0, len(agent_matrix[0])-1)] = train_new_individual()
+
 
     #print initial state
     print ("Game Parameters: ")
     print ("Map size = " + str(map_size))
     print ("Perlin Noise:" + str(use_perlin_noise))
     print ("Random_Params:" + str(use_random_params))
-    print ("Migration Route:" + str(use_migration_route))
+    print ("Rivers:" + str(use_rivers))
     print ("Simulation Steps:" + str(simulation_steps))
     print ("\n")
     #print ("Displaying Game_World in console.")
-    #visualize_matrix(game_world)
+    visualize_matrix(game_world)
     save_matrix_image(game_world, 'Game_World')
     
     frames = [] # array to save images of the heatmap
