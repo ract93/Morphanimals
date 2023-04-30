@@ -4,7 +4,7 @@ import random
 import matplotlib.pyplot as plt
 import imageio
 
-level_difficulty = {1: 10, 2: 60, 3: 80}
+level_difficulty = {1: 10, 2: 40, 3: 60, 4: 80, 5: 90}
 
 def visualize_matrix(matrix):
     fig, ax = plt.subplots()
@@ -53,7 +53,7 @@ def generate_terrain(n, use_perlin_noise=True, randomize_params=True):
                                             lacunarity=lacunarity, repeatx=n, repeaty=n, base=0)
 
         # Scale and shift the values to the range [1, 3]
-        world = (world - np.min(world)) * (3-1)/(np.max(world)-np.min(world)) + 1
+        world = (world - np.min(world)) * (5-1)/(np.max(world)-np.min(world)) + 1
 
         # Round the values to integers
         world = np.round(world)
@@ -218,7 +218,7 @@ def run_game():
 
     
     # configurable parameters, change as needed
-    map_size = 1000
+    map_size = 400
     simulation_steps = 1000
     use_perlin_noise = True  # set to False to use random integer generation instead
     use_random_params = False # set to False to use preset perlin parameters
@@ -240,16 +240,15 @@ def run_game():
     print ("Migration Route:" + str(use_migration_route))
     print ("Simulation Steps:" + str(simulation_steps))
     print ("\n")
-    print ("Displaying Game_World in console.")
-    print ("\n")
-    visualize_matrix(game_world)
+    #print ("Displaying Game_World in console.")
+    #visualize_matrix(game_world)
     save_matrix_image(game_world, 'Game_World')
     
     frames = [] # array to save images of the heatmap
 
     print ("Beginning Simulation...")
     print ("\n")
-    #game loop here
+    #main game loop here
     current_sim_step = 0
     while (current_sim_step < simulation_steps):
         for i in range(len(agent_matrix)):
@@ -259,18 +258,19 @@ def run_game():
         current_sim_step += 1
         im = plt.imshow(agent_matrix, cmap='viridis')
         frames.append(im.get_array())
-        print ("Simulation complete.") 
-        print ("\n")
-        
+   
 
     #print final state
-    print ("Displaying Final_Map_State in console.")
-    visualize_matrix(agent_matrix)
+    #print ("Displaying Final_Map_State in console.")
+    #visualize_matrix(agent_matrix)
     save_matrix_image(agent_matrix, 'Final_Game_State')
     
     #Create gif of execution
     print ("Generating gif...")
-    imageio.mimsave('heatmap.gif', frames, fps=10)
+    imageio.mimsave('heatmap.gif', frames, fps=30)
+
+    print ("Simulation complete.") 
+    print ("\n")
        
 #main
 def main():
