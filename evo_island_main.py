@@ -4,7 +4,7 @@ import random
 import matplotlib.pyplot as plt
 import imageio
 
-level_difficulty = {1: 10, 2: 50, 3: 60, 4: 80, 5: 90}
+level_difficulty = {1: 10, 2: 40, 3: 50, 4: 70, 5: 90}
 
 def visualize_matrix(matrix):
     fig, ax = plt.subplots()
@@ -32,6 +32,19 @@ def generate_island(n, use_perlin_noise=True, randomize_params=True, use_migrati
 
     return world
 
+def generate_petri_dish(n):
+    if n <= 0:
+        return []
+
+    array = [[0] * n for _ in range(n)]
+    increment = 4 / (n - 1)
+
+    for i in range(n):
+        for j in range(n):
+            array[i][j] = round((j * increment) + 1)
+
+    return array
+    
 def generate_terrain(n, use_perlin_noise=True, randomize_params=True):
     if use_perlin_noise:
         if randomize_params:
@@ -52,7 +65,7 @@ def generate_terrain(n, use_perlin_noise=True, randomize_params=True):
                 world[i][j] = noise.pnoise2(i/scale, j/scale, octaves=octaves, persistence=persistence, 
                                             lacunarity=lacunarity, repeatx=n, repeaty=n, base=0)
 
-        # Scale and shift the values to the range [1, 3]
+        # Scale and shift the values to the range [1, 5]
         world = (world - np.min(world)) * (5-1)/(np.max(world)-np.min(world)) + 1
 
         # Round the values to integers
@@ -209,20 +222,21 @@ def run_game():
 
     
     # configurable parameters, change as needed
-    map_size = 1000
-    simulation_steps = 3000
+    map_size = 200
+    simulation_steps = 500
     use_perlin_noise = True  # set to False to use random integer generation instead
     use_random_params = False # set to False to use preset perlin parameters
     use_rivers = True # set to False to remove rivers
 
     #game initialization
     agent_starting_pos = 0,0
-    game_world = generate_island (map_size, use_perlin_noise, use_random_params, use_rivers)
+    #game_world = generate_island (map_size, use_perlin_noise, use_random_params, use_rivers)
+    game_world = generate_petri_dish(map_size)
     agent_matrix = generate_agent_matrix(map_size)
 
     #place initial agent
-    #agent_matrix[agent_starting_pos[0]][agent_starting_pos[1]] = train_new_individual()
-    agent_matrix[random.randint(0, len(agent_matrix)-1)][random.randint(0, len(agent_matrix[0])-1)] = train_new_individual()
+    agent_matrix[agent_starting_pos[0]][agent_starting_pos[1]] = train_new_individual()
+    #agent_matrix[random.randint(0, len(agent_matrix)-1)][random.randint(0, len(agent_matrix[0])-1)] = train_new_individual()
 
 
     #print initial state
@@ -239,7 +253,7 @@ def run_game():
     
     frames = [] # array to save images of the heatmap
 
-    print ("Beginning Simulation...")
+    print ("Running Simulation...")
     print ("\n")
     #main game loop here
     current_sim_step = 0
