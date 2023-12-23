@@ -23,7 +23,7 @@ def visualize_world(matrix):
 
 def visualize_agent_matrix(matrix):
     fig, ax = plt.subplots()
-    im = ax.imshow([[cell.fitness for cell in row] for row in matrix], cmap='inferno')
+    im = ax.imshow([[cell.fitness for cell in row] for row in matrix], cmap='viridis')
     plt.show() 
 
 def transform_matrix(agent_matrix, attribute):
@@ -256,7 +256,7 @@ def run_game():
 
     
     # configurable parameters, change as needed
-    map_size = 500
+    map_size = 300
     simulation_steps = 1000
     use_perlin_noise = True  # set to False to use random integer generation instead
     use_random_params = False # set to False to use preset perlin parameters
