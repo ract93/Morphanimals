@@ -9,7 +9,9 @@ level_difficulty = {1: 10, 2: 40, 3: 50, 4: 70, 5: 90}
 class Agent:
     def __init__(self, fitness=0, alive=False):
         self.fitness = fitness
-        self.alive = alive if fitness > 0 else False
+        self.alive = alive
+        self.age = 0
+        self.maxage = 1000
 
     def is_more_fit_than(self, other):
         return self.fitness > other.fitness
@@ -21,10 +23,10 @@ def visualize_world(matrix):
     im = ax.imshow(matrix, cmap='viridis')
     plt.show()
 
-def visualize_agent_matrix(matrix):
-    fig, ax = plt.subplots()
-    im = ax.imshow([[cell.fitness for cell in row] for row in matrix], cmap='viridis')
-    plt.show() 
+def visualize_agent_attribute(matrix, attribute):
+   fig, ax = plt.subplots()
+   im = ax.imshow([[cell.attribute for cell in row] for row in matrix], cmap='viridis')
+   plt.show() 
 
 def transform_matrix(agent_matrix, attribute):
     return [[getattr(agent, attribute, 0) for agent in row] for row in agent_matrix]
@@ -160,31 +162,37 @@ def isMoreFit(challenger, occupant):
 def generate_agent_matrix(n):
     return [[Agent() for j in range(n)] for i in range(n)]
 
-def train_new_individual():
+def generate_new_individual():
     # generate a random number on a normal distribution
     fitness = np.random.normal(loc=50, scale=10)
     # scale the number so that it falls within the range of 0 to 100
     fitness = max(0, min(100, fitness))
     # invert the number so that larger numbers are more rare
     fitness = 100 - fitness
-    return Agent(int(fitness))
+    return Agent(int(fitness), alive=True)
+
 
 def calc_move(i,j,n, world_matrix, agent_matrix):
    
    current_agent = agent_matrix[i][j]
-   if current_agent.fitness == 0: return # Check if current cell is populated. if is not, skip. Add living or dead bool and update. 
-   
-   newIndividual = train_new_individual()
+   if current_agent.alive == False: return # Check if current cell is populated. if is not, skip.
+
+   current_agent.age = current_agent.age + 1# Increment current agent age.
+   if current_agent.age >= current_agent.maxage: #Check if agent has reached its maximum lifespan
+      agent_matrix[i][j] = Agent()
+      return 
+
+   newIndividual = generate_new_individual()
 
 
    diceroll = random.randint(1, 9) #roll for which action the child will take
-   #the offspring can move to an adacent valid cell, or challenge the parent for its niche
+   #the offspring can move to an adacent valid cell, or challenge the parent for the current cell
 
     #Stay at current cell and challenge parent
    if diceroll == 1:  
     if newIndividual.fitness > level_difficulty[world_matrix[i][j]]: #Does the new invidual meet the baseline fitness to occupy the cell?
         if newIndividual.is_more_fit_than(current_agent): #Is the new individual's fitness higher than its parent? 
-            agent_matrix[i][j] = newIndividual #new individual takes the niche.
+            agent_matrix[i][j] = newIndividual #new individual takes the niche, old agent is killed.
             #or nothing happens and it dies. 
 
     #go north
@@ -261,6 +269,7 @@ def run_game():
     use_perlin_noise = True  # set to False to use random integer generation instead
     use_random_params = False # set to False to use preset perlin parameters
     use_rivers = True # set to False to remove rivers
+    frame_save_interval = 10 #Sets rate of frame saving
 
     #game initialization
     agent_starting_pos = 0,0
@@ -269,8 +278,8 @@ def run_game():
     agent_matrix = generate_agent_matrix(map_size)
 
     #place initial agent
-    agent_matrix[agent_starting_pos[0]][agent_starting_pos[1]] = train_new_individual()
-    #agent_matrix[random.randint(0, len(agent_matrix)-1)][random.randint(0, len(agent_matrix[0])-1)] = train_new_individual()
+    agent_matrix[agent_starting_pos[0]][agent_starting_pos[1]] = generate_new_individual()
+    #agent_matrix[random.randint(0, len(agent_matrix)-1)][random.randint(0, len(agent_matrix[0])-1)] = generate_new_individual()
 
 
     #print initial state
@@ -284,44 +293,66 @@ def run_game():
     #print ("Displaying Game_World in console.")
     visualize_world(game_world)
     save_matrix_image(game_world, 'Game_World')
-    
-    frames = [] # array to save images of the heatmap
 
+
+    #main game loop here
     print ("Running Simulation...")
     print ("\n")
-    #main game loop here
+    
+    fitness_frames = [] # array to save images of agent fitness for heatmap
+    age_frames = [] # array to save images of agent age for heatmap  
+
+    fitness_matrix = transform_matrix(agent_matrix, 'fitness')
+    age_matrix = transform_matrix(agent_matrix, 'age')
+
     current_sim_step = 0
+    
     while (current_sim_step < simulation_steps):
         for i in range(len(agent_matrix)):
             for j in range(len(agent_matrix[0])):
                 calc_move(i,j,map_size,game_world,agent_matrix)   
 
         current_sim_step += 1
-        # Transform the agent_matrix into a numerical matrix for the 'fitness' attribute
-        fitness_matrix = transform_matrix(agent_matrix, 'fitness')
 
-        # Create the frame
-        fig, ax = plt.subplots()
-        im = ax.imshow(fitness_matrix, cmap='inferno')
-        ax.axis('off')  # Optional: Turn off the axis
+        if current_sim_step % frame_save_interval == 0:
+            # Transform the agent_matrix into a numerical matrices for different attributes
+            fitness_matrix = transform_matrix(agent_matrix, 'fitness')
+            age_matrix = transform_matrix(agent_matrix, 'age')
 
-        # Draw canvas and convert to an image array
-        fig.canvas.draw()
-        image = np.frombuffer(fig.canvas.tostring_rgb(), dtype='uint8')
-        image = image.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+             # Create frames for visualization
+            fig1, ax1 = plt.subplots()
+            im1 = ax1.imshow(fitness_matrix, cmap='inferno')
+            ax1.axis('off')  # Optional: Turn off the axis
+                    
+            fig2, ax2 = plt.subplots()
+            im2 = ax2.imshow(age_matrix, cmap='plasma')
+            ax2.axis('off')  # Optional: Turn off the axis
 
-        frames.append(image)
-        plt.close(fig)
+            # Draw canvas and convert attributes to an image array
+            fig1.canvas.draw()
+            image1 = np.frombuffer(fig1.canvas.tostring_rgb(), dtype='uint8')
+            image1 = image1.reshape(fig1.canvas.get_width_height()[::-1] + (3,))
+
+            fitness_frames.append(image1)
+            
+
+            fig2.canvas.draw()
+            image2 = np.frombuffer(fig2.canvas.tostring_rgb(), dtype='uint8')
+            image2 = image2.reshape(fig2.canvas.get_width_height()[::-1] + (3,))
+
+            age_frames.append(image2)
+
+            plt.close(fig1)
+            plt.close(fig2)
    
 
-    #print final state
-    #print ("Displaying Final_Map_State in console.")
-    #visualize_matrix(agent_matrix)
+    #save final state
     save_agent_matrix_image(agent_matrix, 'Final_Game_State', 'fitness')
     
     #Create gif of execution
-    print ("Generating gif...")
-    imageio.mimsave('heatmap.gif', frames, fps=30)
+    print ("Generating gifs...")
+    imageio.mimsave('fitnessmap.gif', fitness_frames, fps=15)
+    imageio.mimsave('agemap.gif', age_frames, fps=15)
 
     print ("Simulation complete.") 
     print ("\n")
