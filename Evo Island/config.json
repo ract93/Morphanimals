@@ -1,0 +1,9 @@
+{
+    "map_size": 500,
+    "simulation_steps": 2000,
+    "use_perlin_noise": true,
+    "use_random_params": false,
+    "use_rivers": true,
+    "frame_save_interval": 2,
+    "frame_rate": 15
+}
