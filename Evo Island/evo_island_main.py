@@ -12,7 +12,7 @@ os.chdir(os.path.dirname(os.path.abspath(__file__)))
 with open('config.json', 'r') as config_file:
         config = json.load(config_file)
 
-level_difficulty = {1: 1, 2: 20, 3: 50, 4: 70, 5: 90}
+level_difficulty = {1: 1, 2: 10, 3: 30, 4: 50, 5: 80}
 
 #Helper Methods
 def isCoordinateInRange(n, x, y):
@@ -22,55 +22,56 @@ def isCoordinateInRange(n, x, y):
         return False
     return True
 
-def find_easiest_difficulty_location(world_matrix):
+def find_easiest_starting_location(world_matrix):
     for i, row in enumerate(world_matrix):
         for j, difficulty in enumerate(row):
             if difficulty == 1:
                 return (i, j)  # Return the coordinates as a tuple (row, column)
     return None  # Return None if no cell with that difficulty is found
 
+def get_image_from_fig(fig):
+    fig.canvas.draw()
+    image = np.frombuffer(fig.canvas.tostring_rgb(), dtype='uint8')
+    image = image.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+    return image
+
 
 #Agent Class
 class Agent:
-    def __init__(self, fitness=0, alive=False):
-        self.fitness = fitness
+    def __init__(self, resistance=0, strength=0, alive=False):
+        self.resistance = resistance #Defines agent's enviromental resistance
+        self.strength = strength #Defines agent's fighting ability with other agent's
         self.alive = alive
         self.age = 0
         self.maxage = 100
-
-    def is_more_fit_than(self, other):
-        return self.fitness > other.fitness
+    
+    def is_stronger(self, other): 
+       return self.strength > other.strength
     
 #Agent Logic
-def isMoreFit(challenger, occupant):
-    return challenger.is_more_fit_than(occupant)
+def isStronger(challenger, occupant):
+    return challenger.is_stronger(occupant)
 
-def generate_agent_matrix(n):
+def initialize_agent_matrix(n):
     return [[Agent() for j in range(n)] for i in range(n)]
 
-def generate_new_individual():
-    # generate a random number on a normal distribution
-    fitness = np.random.normal(loc=50, scale=10)
-    # scale the number so that it falls within the range of 0 to 100
-    fitness = max(0, min(100, fitness))
-    # invert the number so that larger numbers are more rare
-    fitness = 100 - fitness
-    return Agent(int(fitness), alive=True)
-
-def generate_new_individual_from_parent(parent_agent):
+def reproduce_asexually(parent_agent):
     mutation_probability = 0.00084 #True mutation rate of E. Coli.
+    #Mutate resistance
+    mutation_effect = np.random.normal(loc=0, scale=8) if random.random() < mutation_probability else 0
+    resistance = parent_agent.resistance + mutation_effect
+    resistance = max(0, min(100, resistance))
+
+    #Mutate strength
     mutation_effect = np.random.normal(loc=0, scale=2) if random.random() < mutation_probability else 0
-    fitness = parent_agent.fitness + mutation_effect
-    fitness = max(0, min(100, fitness))
+    strength = parent_agent.strength + mutation_effect
+    strength = max(0, min(100, strength))
 
-    # Implement fitness cost or reproduction threshold if needed
-    # ...
-
-    return Agent(int(fitness), alive=True)
+    return Agent(int(resistance), int(strength), alive=True)
 
 def calc_move(i,j,n, world_matrix, agent_matrix):
    
-   current_agent = agent_matrix[i][j]
+   current_agent = agent_matrix[i][j] # Get agent at current location.
    if current_agent.alive == False: return # Check if current cell is populated. if is not, skip.
 
    current_agent.age = current_agent.age + 1# Increment current agent age.
@@ -79,79 +80,79 @@ def calc_move(i,j,n, world_matrix, agent_matrix):
       return 
 
    #newIndividual = generate_new_individual()
-   newIndividual = generate_new_individual_from_parent(current_agent)
+   newIndividual = reproduce_asexually(current_agent)
 
    diceroll = random.randint(1, 9) #roll for which action the child will take
    #the offspring can move to an adacent valid cell, or challenge the parent for the current cell
 
     #Stay at current cell and challenge parent
    if diceroll == 1:  
-    if newIndividual.fitness > level_difficulty[world_matrix[i][j]]: #Does the new invidual meet the baseline fitness to occupy the cell?
-        if newIndividual.is_more_fit_than(current_agent): #Is the new individual's fitness higher than its parent? 
+    if newIndividual.resistance > level_difficulty[world_matrix[i][j]]: #Does the new invidual meet the baseline resistance to occupy the cell?
+        if isStronger(newIndividual,current_agent): #Is the new individual's strength higher than its parent? 
             agent_matrix[i][j] = newIndividual #new individual takes the niche, old agent is killed.
             #or nothing happens and it dies. 
 
     #go north
    if diceroll == 2: 
        if isCoordinateInRange(n,i+1,j): #Is the move in range? 
-          if newIndividual.fitness > level_difficulty[world_matrix[i+1][j]]: #Does the new invidual meet the baseline fitness to occupy the empty cell?
-           if isMoreFit(newIndividual,agent_matrix[i+1][j]): #Does the new individual's fitness beat the fitness of the current occupant?
+          if newIndividual.resistance > level_difficulty[world_matrix[i+1][j]]: #Does the new invidual meet the baseline resistance to occupy the empty cell?
+           if isStronger(newIndividual,agent_matrix[i+1][j]): #Does the new individual's strength beat the strength of the current occupant?
             agent_matrix[i+1][j] = newIndividual #new individual takes the niche. 
             #or nothing happens and it dies. 
        
     #go south
    if diceroll == 3: 
        if isCoordinateInRange(n,i-1,j): #Is the move in range?
-        if newIndividual.fitness > level_difficulty[world_matrix[i-1][j]]: #Does the new invidual meet the baseline fitness to occupy the empty cell?
-           if isMoreFit(newIndividual,agent_matrix[i-1][j]):
+        if newIndividual.resistance > level_difficulty[world_matrix[i-1][j]]: #Does the new invidual meet the baseline resistance to occupy the empty cell?
+           if isStronger(newIndividual,agent_matrix[i-1][j]): #Does the new individual's strength beat the strength of the current occupant?
             agent_matrix[i-1][j] = newIndividual #new individual takes the niche.
             #or nothing happens and it dies. 
        
     #go east
    if diceroll == 4:  
        if isCoordinateInRange(n,i,j+1): #Is the move in range?
-        if newIndividual.fitness > level_difficulty[world_matrix[i][j+1]]: #Does the new invidual meet the baseline fitness to occupy the empty cell?
-           if isMoreFit(newIndividual,agent_matrix[i][j+1]):
+        if newIndividual.resistance > level_difficulty[world_matrix[i][j+1]]: #Does the new invidual meet the baseline resistance to occupy the empty cell?
+           if isStronger(newIndividual,agent_matrix[i][j+1]): #Does the new individual's strength beat the strength of the current occupant?
             agent_matrix[i][j+1] = newIndividual #new individual takes the niche.
             #or nothing happens and it dies. 
 
     #go west
    if diceroll == 5:  
        if isCoordinateInRange(n,i,j-1): #Is the move in range?
-        if newIndividual.fitness > level_difficulty[world_matrix[i][j-1]]: #Does the new invidual meet the baseline fitness to occupy the empty cell?
-           if isMoreFit(newIndividual,agent_matrix[i][j-1]):
+        if newIndividual.resistance > level_difficulty[world_matrix[i][j-1]]: #Does the new invidual meet the baseline resistance to occupy the empty cell?
+           if isStronger(newIndividual,agent_matrix[i][j-1]): #Does the new individual's strength beat the strength of the current occupant?
             agent_matrix[i][j-1] = newIndividual #new individual takes the niche.
             #or nothing happens and it dies. 
 
     #go northeast
    if diceroll == 6:  
        if isCoordinateInRange(n,i+1,j+1): #Is the move in range?
-        if newIndividual.fitness > level_difficulty[world_matrix[i+1][j+1]]: #Does the new invidual meet the baseline fitness to occupy the empty cell?
-           if isMoreFit(newIndividual,agent_matrix[i+1][j+1]):
+        if newIndividual.resistance > level_difficulty[world_matrix[i+1][j+1]]: #Does the new invidual meet the baseline resistance to occupy the empty cell?
+           if isStronger(newIndividual,agent_matrix[i+1][j+1]): #Does the new individual's strength beat the strength of the current occupant?
             agent_matrix[i+1][j+1] = newIndividual #new individual takes the niche.
             #or nothing happens and it dies. 
 
     #go northwest
    if diceroll == 7:  
        if isCoordinateInRange(n,i+1,j-1): #Is the move in range?
-        if newIndividual.fitness > level_difficulty[world_matrix[i+1][j-1]]: #Does the new invidual meet the baseline fitness to occupy the empty cell?
-           if isMoreFit(newIndividual,agent_matrix[i+1][j-1]):
+        if newIndividual.resistance > level_difficulty[world_matrix[i+1][j-1]]: #Does the new invidual meet the baseline resistance to occupy the empty cell?
+           if isStronger(newIndividual,agent_matrix[i+1][j-1]): #Does the new individual's strength beat the strength of the current occupant?
             agent_matrix[i+1][j-1] = newIndividual #new individual takes the niche.
             #or nothing happens and it dies. 
 
     #go southeast
    if diceroll == 8:  
        if isCoordinateInRange(n,i-1,j+1): #Is the move in range?
-        if newIndividual.fitness > level_difficulty[world_matrix[i-1][j+1]]: #Does the new invidual meet the baseline fitness to occupy the empty cell?
-           if isMoreFit(newIndividual,agent_matrix[i-1][j+1]):
+        if newIndividual.resistance > level_difficulty[world_matrix[i-1][j+1]]: #Does the new invidual meet the baseline resistance to occupy the empty cell?
+           if isStronger(newIndividual,agent_matrix[i-1][j+1]): #Does the new individual's strength beat the strength of the current occupant?
             agent_matrix[i-1][j+1] = newIndividual #new individual takes the niche.
             #or nothing happens and it dies. 
 
     #go southwest
    if diceroll == 9:  
        if isCoordinateInRange(n,i-1,j-1): #Is the move in range?
-        if newIndividual.fitness > level_difficulty[world_matrix[i-1][j-1]]: #Does the new invidual meet the baseline fitness to occupy the empty cell?
-           if isMoreFit(newIndividual,agent_matrix[i-1][j-1]):
+        if newIndividual.resistance > level_difficulty[world_matrix[i-1][j-1]]: #Does the new invidual meet the baseline resistance to occupy the empty cell?
+           if isStronger(newIndividual,agent_matrix[i-1][j-1]): #Does the new individual's strength beat the strength of the current occupant?
             agent_matrix[i-1][j-1] = newIndividual #new individual takes the niche.
             #or nothing happens and it dies.       
 
@@ -251,13 +252,15 @@ def generate_island(n, use_perlin_noise=True, randomize_params=True, use_migrati
 #Matrix Creation, Visualization, Saving
 def visualize_world(matrix):
     fig, ax = plt.subplots()
-    im = ax.imshow(matrix, cmap='viridis')
-    plt.show()
+    ax.set_title('Game World')
 
-def visualize_agent_attribute(matrix, attribute):
-   fig, ax = plt.subplots()
-   im = ax.imshow([[cell.attribute for cell in row] for row in matrix], cmap='viridis')
-   plt.show() 
+    # Generate the image data based on the specified attribute
+    im = ax.imshow(matrix, cmap='viridis')
+
+    # Create and configure the colorbar
+    cbar = plt.colorbar(im, ax=ax)
+
+    plt.show()
 
 def transform_matrix(agent_matrix, attribute):
     return [[getattr(agent, attribute, 0) for agent in row] for row in agent_matrix]
@@ -265,6 +268,8 @@ def transform_matrix(agent_matrix, attribute):
 def save_matrix_image(matrix, file_name):
    fig, ax = plt.subplots()
    im = ax.imshow(matrix, cmap='viridis')
+   ax.set_title('Game World')
+   cbar = plt.colorbar(im, ax=ax)
    plt.savefig(str(file_name))
 
 def save_agent_matrix_image(matrix, file_name, attribute):
@@ -298,11 +303,10 @@ def run_game():
     #game_world = generate_petri_dish(map_size)
     
     #agent initialization
-    agent_matrix = generate_agent_matrix(map_size)
+    agent_matrix = initialize_agent_matrix(map_size)
     #agent_starting_pos = 0,0
-    agent_starting_pos = find_easiest_difficulty_location(game_world)
-    agent_matrix[agent_starting_pos[0]][agent_starting_pos[1]] = Agent(fitness=10, alive = True) #Create initial
-    #agent_matrix[random.randint(0, len(agent_matrix)-1)][random.randint(0, len(agent_matrix[0])-1)] = generate_new_individual()
+    agent_starting_pos = find_easiest_starting_location(game_world)
+    agent_matrix[agent_starting_pos[0]][agent_starting_pos[1]] = Agent(resistance=10, strength= 5, alive = True) #Create initial
 
 
     #print initial state
@@ -322,11 +326,27 @@ def run_game():
     print ("Running Simulation...")
     print ("\n")
     
-    fitness_frames = [] # array to save images of agent fitness for heatmap
+    strength_frames = [] # array to save images of agent strength for heatmap
+    resistance_frames = [] # array to save images of agent resistance for heatmap
     age_frames = [] # array to save images of agent age for heatmap  
 
-    fitness_matrix = transform_matrix(agent_matrix, 'fitness')
-    age_matrix = transform_matrix(agent_matrix, 'age')
+    # Declare plots for visualization
+    fig1, ax1 = plt.subplots()
+    im1 = ax1.imshow(transform_matrix(agent_matrix, 'strength'), cmap='viridis', vmin=0, vmax=100)
+    ax1.set_title('Agent Strength')
+    plt.colorbar(im1, ax=ax1)
+
+    fig2, ax2 = plt.subplots()
+    im2 = ax2.imshow(transform_matrix(agent_matrix, 'resistance'), cmap='inferno', vmin=0, vmax=100)
+    ax2.set_title('Agent Resistance')
+    plt.colorbar(im2, ax=ax2)
+
+    fig3, ax3 = plt.subplots()
+    im3 = ax3.imshow(transform_matrix(agent_matrix, 'age'), cmap='plasma', vmin=0, vmax=100)
+    ax3.set_title('Agent Age')
+    plt.colorbar(im3, ax=ax3)
+
+    #For additional attributes, follow pattern
 
     current_sim_step = 0
     
@@ -338,43 +358,36 @@ def run_game():
         current_sim_step += 1
 
         if current_sim_step % frame_save_interval == 0:
-            # Transform the agent_matrix into a numerical matrices for different attributes
-            fitness_matrix = transform_matrix(agent_matrix, 'fitness')
-            age_matrix = transform_matrix(agent_matrix, 'age')
-
-             # Create frames for visualization
-            fig1, ax1 = plt.subplots()
-            im1 = ax1.imshow(fitness_matrix, cmap='viridis')
-            ax1.axis('off')  # Optional: Turn off the axis
-                    
-            fig2, ax2 = plt.subplots()
-            im2 = ax2.imshow(age_matrix, cmap='plasma')
-            ax2.axis('off')  # Optional: Turn off the axis
 
             # Draw canvas and convert attributes to an image array
+            im1.set_data(transform_matrix(agent_matrix, 'strength'))
+            im2.set_data(transform_matrix(agent_matrix, 'resistance'))
+            im3.set_data(transform_matrix(agent_matrix, 'age'))
+
+            # Draw the updated data on the canvas
             fig1.canvas.draw()
-            image1 = np.frombuffer(fig1.canvas.tostring_rgb(), dtype='uint8')
-            image1 = image1.reshape(fig1.canvas.get_width_height()[::-1] + (3,))
-
-            fitness_frames.append(image1)
-            
-
             fig2.canvas.draw()
-            image2 = np.frombuffer(fig2.canvas.tostring_rgb(), dtype='uint8')
-            image2 = image2.reshape(fig2.canvas.get_width_height()[::-1] + (3,))
+            fig3.canvas.draw()
 
-            age_frames.append(image2)
+            # Convert the updated canvas to an image and append to respective frame lists
+            strength_frames.append(get_image_from_fig(fig1))
+            resistance_frames.append(get_image_from_fig(fig2))
+            age_frames.append(get_image_from_fig(fig3))
 
-            plt.close(fig1)
-            plt.close(fig2)
+    plt.close(fig1)
+    plt.close(fig2)
+    plt.close(fig3)
    
 
     #save final state
-    save_agent_matrix_image(agent_matrix, 'Final_Game_State', 'fitness')
+    #save_agent_matrix_image(agent_matrix, 'Final_Game_State: Resistance', 'resistance')
+    #save_agent_matrix_image(agent_matrix, 'Final_Game_State: Strength', 'strength')
+    #save_agent_matrix_image(agent_matrix, 'Final_Game_State: Age', 'age')
     
     #Create gif of execution
     print ("Generating gifs...")
-    imageio.mimsave('fitnessmap.gif', fitness_frames, fps=frame_rate)
+    imageio.mimsave('strength.gif', strength_frames, fps=frame_rate)
+    imageio.mimsave('resistancemap.gif', resistance_frames, fps=frame_rate)
     imageio.mimsave('agemap.gif', age_frames, fps=frame_rate)
 
     print ("Simulation complete.") 
