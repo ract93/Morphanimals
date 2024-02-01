@@ -38,124 +38,89 @@ def get_image_from_fig(fig):
 
 #Agent Class
 class Agent:
-    def __init__(self, resistance=0, strength=0, alive=False):
-        self.resistance = resistance #Defines agent's enviromental resistance
-        self.strength = strength #Defines agent's fighting ability with other agent's
+    def __init__(self, hardiness=0, strength=0, metabolism = 1, alive=False):
+        self.hardiness = hardiness  # Defines agent's environmental hardiness
+        self.strength = strength  # Defines agent's fighting ability with other agents
         self.alive = alive
         self.age = 0
         self.maxage = 100
-    
-    def is_stronger(self, other): 
-       return self.strength > other.strength
-    
+        self.metabolism = metabolism
+
+    def isStronger(self, other):
+        return self.strength > other.strength
+
+    def reproduce_asexually(parent_agent):
+        mutation_probability = 0.00084  #True mutation rate of E. Coli.
+        #Mutate hardiness
+        mutation_effect = np.random.normal(loc=0, scale=8) if random.random() < mutation_probability else 0
+        hardiness = parent_agent.hardiness + mutation_effect
+        hardiness = max(0, min(100, hardiness))
+
+        #Mutate strength
+        mutation_effect = np.random.normal(loc=0, scale=2) if random.random() < mutation_probability else 0
+        strength = parent_agent.strength + mutation_effect
+        strength = max(0, min(100, strength))
+
+        return Agent(int(hardiness), int(strength), alive=True)
+
+    def age_agent(self):
+        #Increases the agent's age and kills it if it reaches max age.
+        self.age += 1
+
+    def kill_agent(self):
+        #Kills the agent, setting its attributes to their default 'dead' state.
+        self.alive = False
+        self.hardiness = 0
+        self.strength = 0
+        self.age = 0
+        return self  # Return the 'dead' agent
+  
 #Agent Logic
-def isStronger(challenger, occupant):
-    return challenger.is_stronger(occupant)
 
 def initialize_agent_matrix(n):
     return [[Agent() for j in range(n)] for i in range(n)]
 
-def reproduce_asexually(parent_agent):
-    mutation_probability = 0.00084 #True mutation rate of E. Coli.
-    #Mutate resistance
-    mutation_effect = np.random.normal(loc=0, scale=8) if random.random() < mutation_probability else 0
-    resistance = parent_agent.resistance + mutation_effect
-    resistance = max(0, min(100, resistance))
-
-    #Mutate strength
-    mutation_effect = np.random.normal(loc=0, scale=2) if random.random() < mutation_probability else 0
-    strength = parent_agent.strength + mutation_effect
-    strength = max(0, min(100, strength))
-
-    return Agent(int(resistance), int(strength), alive=True)
-
-def calc_move(i,j,n, world_matrix, agent_matrix):
+def calc_move(current_step, i,j,n, world_matrix, agent_matrix, food_matrix):
    
    current_agent = agent_matrix[i][j] # Get agent at current location.
    if current_agent.alive == False: return # Check if current cell is populated. if is not, skip.
 
-   current_agent.age = current_agent.age + 1# Increment current agent age.
+   current_agent.age_agent()# Increment current agent age.
    if current_agent.age >= current_agent.maxage: #Check if agent has reached its maximum lifespan
-      agent_matrix[i][j] = Agent()
-      return 
+    agent_matrix[i][j] = current_agent.kill_agent()
+    return
 
-   #newIndividual = generate_new_individual()
-   newIndividual = reproduce_asexually(current_agent)
+   food_available = calculate_food(i, j, food_matrix, current_step, food_generation_rate, current_agent.metabolism)
+    # Consume food logic...
+    food_matrix[i][j] = current_step
+    
+   new_individual = Agent.reproduce_asexually(current_agent)
+   diceroll = random.randint(1, 9)
+   movement_offsets = {
+        1: (0, 0), 2: (1, 0), 3: (-1, 0), 
+        4: (0, 1), 5: (0, -1), 6: (1, 1), 
+        7: (1, -1), 8: (-1, 1), 9: (-1, -1)
+    }
+   di, dj = movement_offsets.get(diceroll, (0, 0))
+   new_i, new_j = i + di, j + dj
+   if isCoordinateInRange(n, new_i, new_j):
+    if new_individual.hardiness > level_difficulty[world_matrix[new_i][new_j]]:
+        if new_individual.isStronger(agent_matrix[new_i][new_j]):
+            agent_matrix[new_i][new_j] = new_individual 
 
-   diceroll = random.randint(1, 9) #roll for which action the child will take
-   #the offspring can move to an adacent valid cell, or challenge the parent for the current cell
+#Food Logic
+def initialize_food_array(n):
+    return [[-1 for _ in range(n)] for _ in range(n)]
 
-    #Stay at current cell and challenge parent
-   if diceroll == 1:  
-    if newIndividual.resistance > level_difficulty[world_matrix[i][j]]: #Does the new invidual meet the baseline resistance to occupy the cell?
-        if isStronger(newIndividual,current_agent): #Is the new individual's strength higher than its parent? 
-            agent_matrix[i][j] = newIndividual #new individual takes the niche, old agent is killed.
-            #or nothing happens and it dies. 
-
-    #go north
-   if diceroll == 2: 
-       if isCoordinateInRange(n,i+1,j): #Is the move in range? 
-          if newIndividual.resistance > level_difficulty[world_matrix[i+1][j]]: #Does the new invidual meet the baseline resistance to occupy the empty cell?
-           if isStronger(newIndividual,agent_matrix[i+1][j]): #Does the new individual's strength beat the strength of the current occupant?
-            agent_matrix[i+1][j] = newIndividual #new individual takes the niche. 
-            #or nothing happens and it dies. 
-       
-    #go south
-   if diceroll == 3: 
-       if isCoordinateInRange(n,i-1,j): #Is the move in range?
-        if newIndividual.resistance > level_difficulty[world_matrix[i-1][j]]: #Does the new invidual meet the baseline resistance to occupy the empty cell?
-           if isStronger(newIndividual,agent_matrix[i-1][j]): #Does the new individual's strength beat the strength of the current occupant?
-            agent_matrix[i-1][j] = newIndividual #new individual takes the niche.
-            #or nothing happens and it dies. 
-       
-    #go east
-   if diceroll == 4:  
-       if isCoordinateInRange(n,i,j+1): #Is the move in range?
-        if newIndividual.resistance > level_difficulty[world_matrix[i][j+1]]: #Does the new invidual meet the baseline resistance to occupy the empty cell?
-           if isStronger(newIndividual,agent_matrix[i][j+1]): #Does the new individual's strength beat the strength of the current occupant?
-            agent_matrix[i][j+1] = newIndividual #new individual takes the niche.
-            #or nothing happens and it dies. 
-
-    #go west
-   if diceroll == 5:  
-       if isCoordinateInRange(n,i,j-1): #Is the move in range?
-        if newIndividual.resistance > level_difficulty[world_matrix[i][j-1]]: #Does the new invidual meet the baseline resistance to occupy the empty cell?
-           if isStronger(newIndividual,agent_matrix[i][j-1]): #Does the new individual's strength beat the strength of the current occupant?
-            agent_matrix[i][j-1] = newIndividual #new individual takes the niche.
-            #or nothing happens and it dies. 
-
-    #go northeast
-   if diceroll == 6:  
-       if isCoordinateInRange(n,i+1,j+1): #Is the move in range?
-        if newIndividual.resistance > level_difficulty[world_matrix[i+1][j+1]]: #Does the new invidual meet the baseline resistance to occupy the empty cell?
-           if isStronger(newIndividual,agent_matrix[i+1][j+1]): #Does the new individual's strength beat the strength of the current occupant?
-            agent_matrix[i+1][j+1] = newIndividual #new individual takes the niche.
-            #or nothing happens and it dies. 
-
-    #go northwest
-   if diceroll == 7:  
-       if isCoordinateInRange(n,i+1,j-1): #Is the move in range?
-        if newIndividual.resistance > level_difficulty[world_matrix[i+1][j-1]]: #Does the new invidual meet the baseline resistance to occupy the empty cell?
-           if isStronger(newIndividual,agent_matrix[i+1][j-1]): #Does the new individual's strength beat the strength of the current occupant?
-            agent_matrix[i+1][j-1] = newIndividual #new individual takes the niche.
-            #or nothing happens and it dies. 
-
-    #go southeast
-   if diceroll == 8:  
-       if isCoordinateInRange(n,i-1,j+1): #Is the move in range?
-        if newIndividual.resistance > level_difficulty[world_matrix[i-1][j+1]]: #Does the new invidual meet the baseline resistance to occupy the empty cell?
-           if isStronger(newIndividual,agent_matrix[i-1][j+1]): #Does the new individual's strength beat the strength of the current occupant?
-            agent_matrix[i-1][j+1] = newIndividual #new individual takes the niche.
-            #or nothing happens and it dies. 
-
-    #go southwest
-   if diceroll == 9:  
-       if isCoordinateInRange(n,i-1,j-1): #Is the move in range?
-        if newIndividual.resistance > level_difficulty[world_matrix[i-1][j-1]]: #Does the new invidual meet the baseline resistance to occupy the empty cell?
-           if isStronger(newIndividual,agent_matrix[i-1][j-1]): #Does the new individual's strength beat the strength of the current occupant?
-            agent_matrix[i-1][j-1] = newIndividual #new individual takes the niche.
-            #or nothing happens and it dies.       
-
+def calculate_food(i, j, food_array, current_step, food_generation_rate):
+    last_step = food_array[i][j]
+    if last_step == -1:
+        # If the cell has never been accessed, calculate food from the start of the simulation
+        food_produced = current_step * food_generation_rate
+    else:
+        food_produced = (current_step - last_step) * food_generation_rate
+    
+    return food_produced
 
   #Terrain Generation
 
@@ -297,16 +262,20 @@ def run_game():
     use_rivers = config['use_rivers']
     frame_save_interval = config['frame_save_interval']
     frame_rate = config['frame_rate']
+    food_generation_rate = ['food_generation_rate']
 
     #game world initialization
     game_world = generate_island (map_size, use_perlin_noise, use_random_params, use_rivers)
     #game_world = generate_petri_dish(map_size)
+
+    #food initialization
+    food_array = initialize_food_array(map_size)
     
     #agent initialization
     agent_matrix = initialize_agent_matrix(map_size)
     #agent_starting_pos = 0,0
     agent_starting_pos = find_easiest_starting_location(game_world)
-    agent_matrix[agent_starting_pos[0]][agent_starting_pos[1]] = Agent(resistance=10, strength= 5, alive = True) #Create initial
+    agent_matrix[agent_starting_pos[0]][agent_starting_pos[1]] = Agent(hardiness=10, strength= 5, alive = True) #Create initial agent
 
 
     #print initial state
@@ -327,7 +296,7 @@ def run_game():
     print ("\n")
     
     strength_frames = [] # array to save images of agent strength for heatmap
-    resistance_frames = [] # array to save images of agent resistance for heatmap
+    hardiness_frames = [] # array to save images of agent hardiness for heatmap
     age_frames = [] # array to save images of agent age for heatmap  
 
     # Declare plots for visualization
@@ -337,8 +306,8 @@ def run_game():
     plt.colorbar(im1, ax=ax1)
 
     fig2, ax2 = plt.subplots()
-    im2 = ax2.imshow(transform_matrix(agent_matrix, 'resistance'), cmap='inferno', vmin=0, vmax=100)
-    ax2.set_title('Agent Resistance')
+    im2 = ax2.imshow(transform_matrix(agent_matrix, 'hardiness'), cmap='inferno', vmin=0, vmax=100)
+    ax2.set_title('Agent Hardiness')
     plt.colorbar(im2, ax=ax2)
 
     fig3, ax3 = plt.subplots()
@@ -361,7 +330,7 @@ def run_game():
 
             # Draw canvas and convert attributes to an image array
             im1.set_data(transform_matrix(agent_matrix, 'strength'))
-            im2.set_data(transform_matrix(agent_matrix, 'resistance'))
+            im2.set_data(transform_matrix(agent_matrix, 'hardiness'))
             im3.set_data(transform_matrix(agent_matrix, 'age'))
 
             # Draw the updated data on the canvas
@@ -371,7 +340,7 @@ def run_game():
 
             # Convert the updated canvas to an image and append to respective frame lists
             strength_frames.append(get_image_from_fig(fig1))
-            resistance_frames.append(get_image_from_fig(fig2))
+            hardiness_frames.append(get_image_from_fig(fig2))
             age_frames.append(get_image_from_fig(fig3))
 
     plt.close(fig1)
@@ -380,15 +349,15 @@ def run_game():
    
 
     #save final state
-    #save_agent_matrix_image(agent_matrix, 'Final_Game_State: Resistance', 'resistance')
+    #save_agent_matrix_image(agent_matrix, 'Final_Game_State: Hardiness', 'hardiness')
     #save_agent_matrix_image(agent_matrix, 'Final_Game_State: Strength', 'strength')
     #save_agent_matrix_image(agent_matrix, 'Final_Game_State: Age', 'age')
     
     #Create gif of execution
     print ("Generating gifs...")
-    imageio.mimsave('strength.gif', strength_frames, fps=frame_rate)
-    imageio.mimsave('resistancemap.gif', resistance_frames, fps=frame_rate)
-    imageio.mimsave('agemap.gif', age_frames, fps=frame_rate)
+    imageio.mimsave('strength_map.gif', strength_frames, fps=frame_rate)
+    imageio.mimsave('hardiness_map.gif', hardiness_frames, fps=frame_rate)
+    imageio.mimsave('age_map.gif', age_frames, fps=frame_rate)
 
     print ("Simulation complete.") 
     print ("\n")

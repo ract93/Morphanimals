@@ -1,9 +1,10 @@
 {
     "map_size": 500,
-    "simulation_steps": 1000,
+    "simulation_steps": 100,
     "use_perlin_noise": true,
     "use_random_params": false,
     "use_rivers": true,
+    "food_generation_rate": 3,
     "frame_save_interval": 3,
     "frame_rate": 30
 }
