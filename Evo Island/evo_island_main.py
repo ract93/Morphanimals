@@ -1,22 +1,17 @@
 import noise
+from noise import pnoise2
 import numpy as np
 import random
 import matplotlib.pyplot as plt
 import imageio
 import json
 import os
-from noise import pnoise2
 
 # Config
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 with open("config.json", "r") as config_file:
     config = json.load(config_file)
-
-enable_food = config["enable_food"]
-enable_aging = config["enable_aging"]
-
-level_difficulty = {1: 1, 2: 10, 3: 30, 4: 50, 5: 80}
 
 
 # Helper Methods
@@ -42,6 +37,138 @@ def get_image_from_fig(fig):
     image = image.reshape(fig.canvas.get_width_height()[::-1] + (3,))
     return image
 
+class Environment:
+    level_difficulty = {1: 1, 2: 10, 3: 30, 4: 50, 5: 80}
+
+    def __init__(self, config):
+        self.config = config
+        self.map_size = config["map_size"]
+        self.world_matrix = self.generate_island(
+            use_perlin_noise=config["use_perlin_noise"],
+            use_random_params=config["use_random_params"],
+            use_rivers=config["use_rivers"]
+        )
+        self.food_matrix = self.initialize_food_matrix()
+
+    @staticmethod
+    def generate_petri_dish(n):
+        if n <= 0:
+            return []
+
+        array = [[0] * n for _ in range(n)]
+        increment = 4 / (n - 1)
+
+        for i in range(n):
+            for j in range(n):
+                array[i][j] = round((j * increment) + 1)
+
+        return array
+    
+    def generate_terrain(self, use_perlin_noise=True, randomize_params=True):
+        if use_perlin_noise:
+            if randomize_params:
+                scale = random.uniform(50, 200)
+                octaves = random.randint(4, 8)
+                persistence = random.uniform(0.4, 0.7)
+                lacunarity = random.uniform(1.8, 2.2)
+            else:
+                scale = 100.0
+                octaves = 6
+                persistence = 0.5
+                lacunarity = 2.0
+
+            world = np.zeros((self.map_size, self.map_size))
+            for i in range(self.map_size):
+                for j in range(self.map_size):
+                    world[i][j] = pnoise2(
+                        i / scale,
+                        j / scale,
+                        octaves=octaves,
+                        persistence=persistence,
+                        lacunarity=lacunarity,
+                        repeatx=self.map_size,
+                        repeaty=self.map_size,
+                        base=0,
+                    )
+
+            world = (world - np.min(world)) * (5 - 1) / (np.max(world) - np.min(world)) + 1
+            world = np.round(world)
+            return world.astype(int)
+
+        else:
+            return [[random.randint(1, 3) for _ in range(self.map_size)] for _ in range(self.map_size)]
+
+    def generate_island(self, use_perlin_noise=True, use_random_params=True, use_rivers=True):
+        world = self.generate_terrain(use_perlin_noise, use_random_params)
+        if use_rivers:
+            world = self.generate_river(world)  # Passing world matrix as argument
+        return world
+
+    def generate_river(self, world_matrix):
+        n = self.map_size
+
+        # Generate 2D Perlin noise
+        scale = 200.0
+        octaves = 6
+        persistence = 0.4
+        lacunarity = 2.0
+        grid = np.zeros((n, n))
+        for i in range(n):
+            for j in range(n):
+                grid[i][j] = noise.pnoise2(
+                    i / scale,
+                    j / scale,
+                    octaves=octaves,
+                    persistence=persistence,
+                    lacunarity=lacunarity,
+                    repeatx=n,
+                    repeaty=n,
+                    base=0,
+                )
+
+        # Find the maximum and minimum values in the grid
+        max_val = np.max(grid)
+        min_val = np.min(grid)
+
+        # Rescale the values in the grid to be between 0 and 1
+        scaled_grid = (grid - min_val) / (max_val - min_val)
+
+        # Define the river path as a series of points with y-values along the center of the grid
+        river_width = n // 50
+        river_path = [(i, scaled_grid[i, n // 2]) for i in range(n)]
+
+        # Write the river pattern directly to the world array
+        for i in range(n):
+            for j in range(n):
+                if abs(int(river_path[i][1] * n) - j) <= river_width // 2:
+                    world_matrix[i][j] = 1
+
+        # Return the updated world array
+        return world_matrix
+
+
+
+    def initialize_food_matrix(self):
+        initial_food_amount = self.config["initial_food"]
+        food_matrix = [[(initial_food_amount, -1) for _ in range(self.map_size)] for _ in range(self.map_size)]
+        return food_matrix
+
+    def calculate_food(self, i, j, current_step, agent_metabolism):
+        food_generation_rate = self.config["food_generation_rate"]
+        max_food_capacity = self.config["max_food_capacity"]
+        food_amount, last_accessed = self.food_matrix[i][j]
+        if last_accessed == -1:
+            food_produced = current_step * food_generation_rate
+        else:
+            food_produced = (current_step - last_accessed) * food_generation_rate
+        new_food_amount = min(food_amount + food_produced, max_food_capacity)
+        if new_food_amount >= agent_metabolism:
+            self.food_matrix[i][j] = (new_food_amount - agent_metabolism, current_step)
+            return True
+        else:
+            self.food_matrix[i][j] = (0, current_step)
+            return False
+        
 
 # Agent Class
 class Agent:
@@ -136,200 +263,46 @@ def initialize_agent_matrix(n):
     return [[Agent() for j in range(n)] for i in range(n)]
 
 
-def calc_move(current_step, i, j, n, world_matrix, agent_matrix, food_matrix):
+def calc_move(current_step, i, j, environment, agent_matrix):
+    current_agent = agent_matrix[i][j]
+    if not current_agent.alive:
+        return
 
-    current_agent = agent_matrix[i][j]  # Get agent at current location.
-    if current_agent.alive == False:
-        return  # Check if current cell is populated. if is not, skip.
-
-    if enable_aging:
+    if config["enable_aging"] == True:
         current_agent.age_agent()
-        if not current_agent.alive: #If agent died to old age this turn
+        if not current_agent.alive:
             return
     else:
-        #Increment agent age only
-        current_agent.age = current_agent.age + 1
+        current_agent.age += 1
 
     # Attempt to consume food and survive
-    if enable_food:
-        survived = calculate_food( i, j, food_matrix, current_step, current_agent.metabolism)
+    if config["enable_food"] == True:
+        survived = environment.calculate_food(i, j, current_step, current_agent.metabolism)
         if not survived:
-            agent_matrix[i][j] = current_agent.kill_agent()  # Handle starvation
+            agent_matrix[i][j].kill_agent()
             return
 
     new_individual = Agent.reproduce_asexually(current_agent)
     diceroll = random.randint(1, 9)
     movement_offsets = {
-        1: (0, 0),
-        2: (1, 0),
-        3: (-1, 0),
+        1: (0, 0), 
+        2: (1, 0), 
+        3: (-1, 0), 
         4: (0, 1),
-        5: (0, -1),
-        6: (1, 1),
-        7: (1, -1),
-        8: (-1, 1),
+        5: (0, -1), 
+        6: (1, 1), 
+        7: (1, -1), 
+        8: (-1, 1), 
         9: (-1, -1),
     }
     di, dj = movement_offsets.get(diceroll, (0, 0))
     new_i, new_j = i + di, j + dj
-    if isCoordinateInRange(n, new_i, new_j):
-        if new_individual.hardiness > level_difficulty[world_matrix[new_i][new_j]]:
-            if new_individual.strength> agent_matrix[new_i][new_j].strength:
-                agent_matrix[new_i][new_j] = new_individual
 
+    if isCoordinateInRange(environment.map_size, new_i, new_j) and \
+       new_individual.hardiness > environment.level_difficulty[environment.world_matrix[new_i][new_j]]:
+        if new_individual.strength > agent_matrix[new_i][new_j].strength:
+            agent_matrix[new_i][new_j] = new_individual
 
-# Food Logic
-def initialize_food_matrix(n):
-    # Initialize all cells with (initial food amount, -1 as last accessed step)
-    initial_food_amount = config["initial_food"]
-    return [[(initial_food_amount, -1) for _ in range(n)] for _ in range(n)]
-
-
-def calculate_food(i, j, food_matrix, current_step, agent_metabolism):
-
-    food_generation_rate = config["food_generation_rate"]
-    max_food_capacity = config["max_food_capacity"]
-
-    food_amount, last_accessed = food_matrix[i][j]
-
-    # Calculate food production since last accessed
-    if last_accessed == -1:  # Never been accessed
-        food_produced = current_step * food_generation_rate
-    else:
-        food_produced = (current_step - last_accessed) * food_generation_rate
-
-    # Update food amount with new production, capped at max capacity
-    new_food_amount = min(food_amount + food_produced, max_food_capacity)
-
-    # Consume food based on agent's metabolism, update last accessed step
-    if new_food_amount >= agent_metabolism:
-        food_matrix[i][j] = (
-            new_food_amount - agent_metabolism,
-            current_step,
-        )  # Update food amount and access step
-        return True  # Agent survives
-    else:
-        food_matrix[i][j] = (0, current_step)  # Reset food to 0 and update access step
-        return False  # Agent starves
-
-
-# Terrain Generation
-
-
-def generate_petri_dish(n):
-    if n <= 0:
-        return []
-
-    array = [[0] * n for _ in range(n)]
-    increment = 4 / (n - 1)
-
-    for i in range(n):
-        for j in range(n):
-            array[i][j] = round((j * increment) + 1)
-
-    return array
-
-
-def generate_terrain(n, use_perlin_noise=True, randomize_params=True):
-    if use_perlin_noise:
-        if randomize_params:
-            scale = random.uniform(50, 200)
-            octaves = random.randint(4, 8)
-            persistence = random.uniform(0.4, 0.7)
-            lacunarity = random.uniform(1.8, 2.2)
-        else:
-            scale = (
-                100.0  # adjust this parameter to change the "roughness" of the terrain
-            )
-            octaves = (
-                6  # adjust this parameter to change the level of detail in the terrain
-            )
-            persistence = 0.5  # adjust this parameter to change the balance of high and low terrain
-            lacunarity = 2.0  # adjust this parameter to change the level of detail in the terrain
-
-        # Generate Perlin noise values for each cell in the array
-        world = np.zeros((n, n))
-        for i in range(n):
-            for j in range(n):
-                world[i][j] = noise.pnoise2(
-                    i / scale,
-                    j / scale,
-                    octaves=octaves,
-                    persistence=persistence,
-                    lacunarity=lacunarity,
-                    repeatx=n,
-                    repeaty=n,
-                    base=0,
-                )
-
-        # Scale and shift the values to the range [1, 5]
-        world = (world - np.min(world)) * (5 - 1) / (np.max(world) - np.min(world)) + 1
-
-        # Round the values to integers
-        world = np.round(world)
-
-        # Set the top left cell to biome 1, starting cell is always a "safe" zone.
-        # world[0][0] = 1
-
-        return world.astype(int).tolist()
-
-    else:
-        # Map is randomly generated with no structure.
-        return [[random.randint(1, 3) for i in range(n)] for j in range(n)]
-
-
-
-def generate_river(n, world):
-    # Generate 2D Perlin noise
-    scale = 200.0
-    octaves = 6
-    persistence = 0.4
-    lacunarity = 2.0
-    grid = [[0 for j in range(n)] for i in range(n)]
-    for i in range(n):
-        for j in range(n):
-            grid[i][j] = pnoise2(
-                i / scale,
-                j / scale,
-                octaves=octaves,
-                persistence=persistence,
-                lacunarity=lacunarity,
-                repeatx=n,
-                repeaty=n,
-                base=0,
-            )
-
-    # Find the maximum and minimum values in the grid
-    max_val = max(map(max, grid))
-    min_val = min(map(min, grid))
-
-    # Rescale the values in the grid to be between 0 and 1
-    scaled_grid = [
-        [(val - min_val) / (max_val - min_val) for val in row] for row in grid
-    ]
-
-    # Define the river path as a series of points with y-values along the center of the grid
-    river_width = n // 50
-    river_path = [[i, scaled_grid[i][n // 2]] for i in range(n)]
-
-    # Write the river pattern directly to the world array
-    for i in range(n):
-        for j in range(n):
-            if abs(int(river_path[i][1] * n) - j) <= river_width // 2:
-                world[i][j] = 1
-
-    # Return the world array
-    return world
-
-
-def generate_island(
-    n, use_perlin_noise=True, randomize_params=True, use_migration_route=True
-):
-    world = generate_terrain(n, use_perlin_noise, randomize_params)
-    if use_migration_route:
-        world = generate_river(n, world)
-
-    return world
 
 
 # Matrix Creation, Visualization, Saving
@@ -375,55 +348,46 @@ def save_agent_matrix_image(matrix, file_name, attribute):
 
 # main game loop
 def run_game():
-
     # Use the map configurations
-    map_size = config["map_size"]
     simulation_steps = config["simulation_steps"]
-    use_perlin_noise = config["use_perlin_noise"]
-    use_random_params = config["use_random_params"]
-    use_rivers = config["use_rivers"]
     frame_save_interval = config["frame_save_interval"]
     frame_rate = config["frame_rate"]
 
-    # game world initialization
-    game_world = generate_island(
-        map_size, use_perlin_noise, use_random_params, use_rivers
-    )
-    # game_world = generate_petri_dish(map_size)
+     # Print initial state
+    # Print initial state and game parameters
+    print("Game Parameters:")
+    print("Map size =", config["map_size"])
+    print("Perlin Noise:", config["use_perlin_noise"])
+    print("Random Params:", config["use_random_params"])
+    print("Rivers:", config["use_rivers"])
+    print("Food Simulation:", config["enable_food"])
+    print("Aging Simulation:", config["enable_aging"])
+    print("Simulation Steps:", config["simulation_steps"])
+    print()
 
-    # food initialization
-    food_matrix = initialize_food_matrix(map_size)
+    # Initialize the environment
+    environment = Environment(config)
 
-    # agent initialization
-    agent_matrix = initialize_agent_matrix(map_size)
-    # agent_starting_pos = 0,0
-    agent_starting_pos = find_easiest_starting_location(game_world)
+    # Initialize the agent matrix
+    agent_matrix = initialize_agent_matrix(environment.map_size)
+
+    # Find starting position for the initial agent
+    agent_starting_pos = find_easiest_starting_location(environment.world_matrix)
+
     # Create initial agent
     default_genome = Agent.generate_default_genome()
     agent_matrix[agent_starting_pos[0]][agent_starting_pos[1]] = Agent.create_live_agent(genome=default_genome)
 
+    visualize_world(environment.world_matrix)
+    save_matrix_image(environment.world_matrix, "Game_World")
 
-    # print initial state
-    print("Game Parameters: ")
-    print("Map size = " + str(map_size))
-    print("Perlin Noise:" + str(use_perlin_noise))
-    print("Random_Params:" + str(use_random_params))
-    print("Rivers:" + str(use_rivers))
-    print( "Food Simulation: " + str(enable_food))
-    print( "Aging Simulation: " + str(enable_aging))
-    print("Simulation Steps:" + str(simulation_steps))
-    print("\n")
-    # print ("Displaying Game_World in console.")
-    visualize_world(game_world)
-    save_matrix_image(game_world, "Game_World")
-
-    # main game loop here
-    print("Running Simulation...")
-    print("\n")
-
-    strength_frames = []  # array to save images of agent strength for heatmap
-    hardiness_frames = []  # array to save images of agent hardiness for heatmap
-    age_frames = []  # array to save images of agent age for heatmap
+    # Main game loop
+    print("Running Simulation...\n")
+    strength_frames = []  
+    hardiness_frames = []  
+    age_frames = [] 
+    maxage_frames = [] 
+    metabolism_frames = [] 
 
     # Declare plots for visualization
     fig1, ax1 = plt.subplots()
@@ -447,67 +411,73 @@ def run_game():
     ax3.set_title("Agent Age")
     plt.colorbar(im3, ax=ax3)
 
-    # For additional attributes, follow pattern
+    fig4, ax4 = plt.subplots()
+    im4 = ax4.imshow(
+        transform_matrix(agent_matrix, "maxage"), cmap="plasma", vmin=0, vmax=100
+    )
+    ax4.set_title("Agent Max Lifespan")
+    plt.colorbar(im3, ax=ax4)
+
+    fig5, ax5 = plt.subplots()
+    im5 = ax5.imshow(
+        transform_matrix(agent_matrix, "metabolism"), cmap="plasma", vmin=0, vmax=100
+    )
+    ax5.set_title("Agent Metabolism")
+    plt.colorbar(im5, ax=ax5)
+
 
     current_sim_step = 0
 
     while current_sim_step < simulation_steps:
-        living_agents_count = 0  # Reset count for each simulation step
+        living_agents_count = 0  
+
         for i in range(len(agent_matrix)):
             for j in range(len(agent_matrix[0])):
                 if agent_matrix[i][j].alive:
                     living_agents_count += 1
-                    calc_move(
-                        current_sim_step,
-                        i,
-                        j,
-                        map_size,
-                        game_world,
-                        agent_matrix,
-                        food_matrix,
-                    )
+                    calc_move(current_sim_step, i, j, environment, agent_matrix)
 
         if living_agents_count == 0:
             print("All agents have died. Ending simulation at step", current_sim_step)
-            break  # Exit the loop if no living agents are left
+            break  
 
         current_sim_step += 1
 
         if current_sim_step % frame_save_interval == 0:
-
             # Draw canvas and convert attributes to an image array
             im1.set_data(transform_matrix(agent_matrix, "strength"))
             im2.set_data(transform_matrix(agent_matrix, "hardiness"))
             im3.set_data(transform_matrix(agent_matrix, "age"))
+            im4.set_data(transform_matrix(agent_matrix, "maxage"))
+            im5.set_data(transform_matrix(agent_matrix, "metabolism"))
 
             # Draw the updated data on the canvas
             fig1.canvas.draw()
             fig2.canvas.draw()
             fig3.canvas.draw()
+            fig4.canvas.draw()
+            fig5.canvas.draw()
 
             # Convert the updated canvas to an image and append to respective frame lists
             strength_frames.append(get_image_from_fig(fig1))
             hardiness_frames.append(get_image_from_fig(fig2))
             age_frames.append(get_image_from_fig(fig3))
+            maxage_frames.append(get_image_from_fig(fig4))
+            metabolism_frames.append(get_image_from_fig(fig5))
 
     plt.close(fig1)
     plt.close(fig2)
     plt.close(fig3)
 
-    # save final state
-    # save_agent_matrix_image(agent_matrix, 'Final_Game_State: Hardiness', 'hardiness')
-    # save_agent_matrix_image(agent_matrix, 'Final_Game_State: Strength', 'strength')
-    # save_agent_matrix_image(agent_matrix, 'Final_Game_State: Age', 'age')
-
-    # Create gif of execution
+    # Save final state
     print("Generating gifs...")
     imageio.mimsave("strength_map.gif", strength_frames, fps=frame_rate)
     imageio.mimsave("hardiness_map.gif", hardiness_frames, fps=frame_rate)
     imageio.mimsave("age_map.gif", age_frames, fps=frame_rate)
+    imageio.mimsave("max_age_map.gif", maxage_frames, fps=frame_rate)
+    imageio.mimsave("metabolism.gif", metabolism_frames, fps=frame_rate)
 
-    print("Simulation complete.")
-    print("\n")
-
+    print("Simulation complete.\n")
 
 # main
 def main():
