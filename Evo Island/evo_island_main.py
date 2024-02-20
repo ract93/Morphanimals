@@ -45,55 +45,93 @@ def get_image_from_fig(fig):
 
 # Agent Class
 class Agent:
-    def __init__(self, hardiness=0, strength=0, metabolism=5, alive=False):
-        self.hardiness = hardiness  # Defines agent's environmental hardiness
-        self.strength = strength  # Defines agent's fighting ability with other agents
-        self.alive = alive
-        self.age = 0
-        self.maxage = 100
-        self.metabolism = metabolism
+    GENOME_LENGTH = 32  # Adjust as needed for genome length
 
-    def isStronger(self, other):
-        return self.strength > other.strength
-
-    def reproduce_asexually(parent_agent):
-        mutation_probability = 0.00084  # True mutation rate of E. Coli.
-        # Mutate hardiness
-        mutation_effect = (
-            np.random.normal(loc=0, scale=8)
-            if random.random() < mutation_probability
-            else 0
-        )
-        hardiness = parent_agent.hardiness + mutation_effect
-        hardiness = max(0, min(100, hardiness))
-
-        # Mutate strength
-        mutation_effect = (
-            np.random.normal(loc=0, scale=2)
-            if random.random() < mutation_probability
-            else 0
-        )
-        strength = parent_agent.strength + mutation_effect
-        strength = max(0, min(100, strength))
-
-        return Agent(int(hardiness), int(strength), alive=True)
-
-    def age_agent(self):
-        # Increases the agent's age and kills it if it reaches max age.
-        self.age += 1
-
-    def kill_agent(self):
-        # Kills the agent, setting its attributes to their default 'dead' state.
+    def __init__(self):
+        # Default constructor for dead agents
         self.alive = False
+        self.genome = None
+        self.reset_traits()
+
+    @classmethod
+    def create_live_agent(cls, genome=None):
+        # Alternative constructor for live agents
+        instance = cls()
+        instance.alive = True
+        instance.genome = genome if genome is not None else ''.join(random.choice('01') for _ in range(cls.GENOME_LENGTH))
+        instance.decode_traits()
+        return instance
+
+    def decode_traits(self):
+        # Implement the logic to decode traits from the genome
+        # Example:
+        self.age = 0
+        self.maxage = self.decode_trait(0, 8, 0, 100)
+        self.hardiness = self.decode_trait(8, 16, 0, 100)
+        self.strength = self.decode_trait(16, 24, 0, 100)
+        self.metabolism = self.decode_trait(24, 32, 0, 100)
+
+    def reset_traits(self):
+        # Reset traits for dead agents
+        self.age = 0
+        self.maxage = 0
         self.hardiness = 0
         self.strength = 0
-        self.age = 0
-        return self  # Return the 'dead' agent
+        self.metabolism = 0
+
+    @classmethod
+    def generate_default_genome(cls):
+        # Assuming max_age=100, hardiness=10, strength=5, metabolism=5
+        return cls.generate_genome(max_age=100, hardiness=10, strength=5, metabolism=5)
+
+    @staticmethod
+    def encode_trait(value, min_value, max_value, start, end):
+        # Scale the value from its range to a binary number
+        binary_segment = format(int((value - min_value) / (max_value - min_value) * (2**(end-start) - 1)), f'0{end-start}b')
+        return binary_segment
+
+    def decode_trait(self, start, end, min_value, max_value):
+        binary_segment = self.genome[start:end]
+        trait_value = int(binary_segment, 2)
+        scaled_value = min_value + (trait_value / (2**(end-start) - 1)) * (max_value - min_value)
+        return int(scaled_value)
+
+    @staticmethod
+    def mutate_genome(genome):
+        mutation_rate = config['mutation_rate']  # Assuming config is accessible
+        mutated_genome = genome
+        for i in range(len(genome)):
+            if random.random() < mutation_rate:
+                mutated_bit = '1' if genome[i] == '0' else '0'
+                mutated_genome = mutated_genome[:i] + mutated_bit + mutated_genome[i+1:]
+        return mutated_genome
+
+    @classmethod
+    def generate_genome(cls, max_age, hardiness, strength, metabolism):
+        max_age_genome = cls.encode_trait(max_age, 0, 100, 0, 8)
+        hardiness_genome = cls.encode_trait(hardiness, 0, 100, 8, 16)
+        strength_genome = cls.encode_trait(strength, 0, 100, 16, 24)
+        metabolism_genome = cls.encode_trait(metabolism, 0, 100, 24, 32)
+        # Concatenate all the genome segments
+        full_genome = max_age_genome + hardiness_genome + strength_genome + metabolism_genome
+        return full_genome
+
+    @classmethod
+    def reproduce_asexually(cls, parent_agent):
+        child_genome = cls.mutate_genome(parent_agent.genome)
+        return cls.create_live_agent(genome=child_genome)
+
+    def age_agent(self):
+        self.age += 1
+        if self.age >= self.maxage:
+            self.kill_agent()
+
+    def kill_agent(self):
+        self.alive = False
+        self.reset_traits()  # Reset traits for consistency
 
 
 # Agent Logic
-
-
 def initialize_agent_matrix(n):
     return [[Agent() for j in range(n)] for i in range(n)]
 
@@ -104,25 +142,20 @@ def calc_move(current_step, i, j, n, world_matrix, agent_matrix, food_matrix):
     if current_agent.alive == False:
         return  # Check if current cell is populated. if is not, skip.
 
-    current_agent.age_agent()  # Increment current agent age.
     if enable_aging:
-        if (
-            current_agent.age >= current_agent.maxage
-        ):  # Check if agent has reached its maximum lifespan
-            agent_matrix[i][j] = current_agent.kill_agent()
+        current_agent.age_agent()
+        if not current_agent.alive: #If agent died to old age this turn
             return
+    else:
+        #Increment agent age only
+        current_agent.age = current_agent.age + 1
 
-        # Attempt to consume food and survive
-        if enable_food:
-            survived = calculate_food(
-                i, j, food_matrix, current_step, current_agent.metabolism
-            )
-            if not survived:
-                agent_matrix[i][j] = current_agent.kill_agent()  # Handle starvation
-                return
-
-            else:
-                pass
+    # Attempt to consume food and survive
+    if enable_food:
+        survived = calculate_food( i, j, food_matrix, current_step, current_agent.metabolism)
+        if not survived:
+            agent_matrix[i][j] = current_agent.kill_agent()  # Handle starvation
+            return
 
     new_individual = Agent.reproduce_asexually(current_agent)
     diceroll = random.randint(1, 9)
@@ -141,7 +174,7 @@ def calc_move(current_step, i, j, n, world_matrix, agent_matrix, food_matrix):
     new_i, new_j = i + di, j + dj
     if isCoordinateInRange(n, new_i, new_j):
         if new_individual.hardiness > level_difficulty[world_matrix[new_i][new_j]]:
-            if new_individual.isStronger(agent_matrix[new_i][new_j]):
+            if new_individual.strength> agent_matrix[new_i][new_j].strength:
                 agent_matrix[new_i][new_j] = new_individual
 
 
@@ -343,7 +376,7 @@ def save_agent_matrix_image(matrix, file_name, attribute):
 # main game loop
 def run_game():
 
-    # Use the configurations
+    # Use the map configurations
     map_size = config["map_size"]
     simulation_steps = config["simulation_steps"]
     use_perlin_noise = config["use_perlin_noise"]
@@ -365,9 +398,10 @@ def run_game():
     agent_matrix = initialize_agent_matrix(map_size)
     # agent_starting_pos = 0,0
     agent_starting_pos = find_easiest_starting_location(game_world)
-    agent_matrix[agent_starting_pos[0]][agent_starting_pos[1]] = Agent(
-        hardiness=10, strength=5, alive=True
-    )  # Create initial agent
+    # Create initial agent
+    default_genome = Agent.generate_default_genome()
+    agent_matrix[agent_starting_pos[0]][agent_starting_pos[1]] = Agent.create_live_agent(genome=default_genome)
+
 
     # print initial state
     print("Game Parameters: ")
