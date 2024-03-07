@@ -13,30 +13,6 @@ os.chdir(os.path.dirname(os.path.abspath(__file__)))
 with open("config.json", "r") as config_file:
     config = json.load(config_file)
 
-
-# Helper Methods
-def isCoordinateInRange(n, x, y):
-    if x < 0 or x >= n:
-        return False
-    if y < 0 or y >= n:
-        return False
-    return True
-
-
-def find_easiest_starting_location(world_matrix):
-    for i, row in enumerate(world_matrix):
-        for j, difficulty in enumerate(row):
-            if difficulty == 1:
-                return (i, j)  # Return the coordinates as a tuple (row, column)
-    return None  # Return None if no cell with that difficulty is found
-
-
-def get_image_from_fig(fig):
-    fig.canvas.draw()
-    image = np.frombuffer(fig.canvas.tostring_rgb(), dtype="uint8")
-    image = image.reshape(fig.canvas.get_width_height()[::-1] + (3,))
-    return image
-
 class Environment:
     level_difficulty = {1: 1, 2: 10, 3: 30, 4: 50, 5: 80}
 
@@ -65,7 +41,7 @@ class Environment:
         return array
     
     def generate_terrain(self, use_perlin_noise=True, randomize_params=True):
-        if use_perlin_noise:
+        if use_perlin_noise: 
             if randomize_params:
                 scale = random.uniform(50, 200)
                 octaves = random.randint(4, 8)
@@ -146,8 +122,6 @@ class Environment:
         # Return the updated world array
         return world_matrix
 
-
-
     def initialize_food_matrix(self):
         initial_food_amount = self.config["initial_food"]
         food_matrix = [[(initial_food_amount, -1) for _ in range(self.map_size)] for _ in range(self.map_size)]
@@ -169,105 +143,98 @@ class Environment:
             self.food_matrix[i][j] = (0, current_step)
             return False
         
+    def find_easiest_starting_location(self):
+        for i, row in enumerate(self.world_matrix):
+            for j, difficulty in enumerate(row):
+                if difficulty == 1:
+                    return (i, j)  # Return the coordinates as a tuple (row, column)
+        return None  # Return None if no cell with that difficulty is found
+        
 
 # Agent Class
-class Agent:
-    GENOME_LENGTH = 32  # Adjust as needed for genome length
+import numpy as np
 
+class Agent:
     def __init__(self):
-        # Default constructor for dead agents
-        self.alive = False
-        self.genome = None
+        self.alive = False  # Agent starts as dead
+        self.genome = None  # No genome until specifically assigned
+        self.age = 0
         self.reset_traits()
 
     @classmethod
     def create_live_agent(cls, genome=None):
-        # Alternative constructor for live agents
-        instance = cls()
-        instance.alive = True
-        instance.genome = genome if genome is not None else ''.join(random.choice('01') for _ in range(cls.GENOME_LENGTH))
-        instance.decode_traits()
-        return instance
-
-    def decode_traits(self):
-        # Implement the logic to decode traits from the genome
-        # Example:
-        self.age = 0
-        self.maxage = self.decode_trait(0, 8, 0, 100)
-        self.hardiness = self.decode_trait(8, 16, 0, 100)
-        self.strength = self.decode_trait(16, 24, 0, 100)
-        self.metabolism = self.decode_trait(24, 32, 0, 100)
-
-    def reset_traits(self):
-        # Reset traits for dead agents
-        self.age = 0
-        self.maxage = 0
-        self.hardiness = 0
-        self.strength = 0
-        self.metabolism = 0
-
-    @classmethod
-    def generate_default_genome(cls):
-        # Assuming max_age=100, hardiness=10, strength=5, metabolism=5
-        return cls.generate_genome(max_age=100, hardiness=10, strength=5, metabolism=5)
+        live_agent = cls()
+        live_agent.alive = True  # This agent is alive
+        live_agent.genome = genome if genome is not None else cls.generate_default_genome()
+        live_agent.decode_genome()
+        return live_agent
+    
+    def decode_genome(self):
+        # Map the genome vector directly to traits for simplicity
+        self.lifespan, self.hardiness, self.strength, self.metabolism = self.genome
 
     @staticmethod
-    def encode_trait(value, min_value, max_value, start, end):
-        # Scale the value from its range to a binary number
-        binary_segment = format(int((value - min_value) / (max_value - min_value) * (2**(end-start) - 1)), f'0{end-start}b')
-        return binary_segment
-
-    def decode_trait(self, start, end, min_value, max_value):
-        binary_segment = self.genome[start:end]
-        trait_value = int(binary_segment, 2)
-        scaled_value = min_value + (trait_value / (2**(end-start) - 1)) * (max_value - min_value)
-        return int(scaled_value)
+    def generate_default_genome():
+        # Define default midrange values for the traits
+        default_values = np.array([20, 10, 5, 5])  # Example default values
+        return default_values
 
     @staticmethod
     def mutate_genome(genome):
-        mutation_rate = config['mutation_rate']  # Assuming config is accessible
-        mutated_genome = genome
+        # Apply mutations to each trait based on mutation rate and a normal distribution
+        mutation_rate= config["mutation_rate"]
+        mutation_effects = np.zeros_like(genome)
         for i in range(len(genome)):
-            if random.random() < mutation_rate:
-                mutated_bit = '1' if genome[i] == '0' else '0'
-                mutated_genome = mutated_genome[:i] + mutated_bit + mutated_genome[i+1:]
+            if np.random.rand() < mutation_rate:
+                mutation_effects[i] = np.random.normal(loc=0, scale=2)
+        mutated_genome = genome + mutation_effects
+        mutated_genome = np.clip(mutated_genome, 0, 100)  # Ensure traits remain within bounds
         return mutated_genome
-
-    @classmethod
-    def generate_genome(cls, max_age, hardiness, strength, metabolism):
-        max_age_genome = cls.encode_trait(max_age, 0, 100, 0, 8)
-        hardiness_genome = cls.encode_trait(hardiness, 0, 100, 8, 16)
-        strength_genome = cls.encode_trait(strength, 0, 100, 16, 24)
-        metabolism_genome = cls.encode_trait(metabolism, 0, 100, 24, 32)
-        # Concatenate all the genome segments
-        full_genome = max_age_genome + hardiness_genome + strength_genome + metabolism_genome
-        return full_genome
 
     @classmethod
     def reproduce_asexually(cls, parent_agent):
         child_genome = cls.mutate_genome(parent_agent.genome)
-        return cls.create_live_agent(genome=child_genome)
+        return cls.create_live_agent(child_genome)
 
     def age_agent(self):
         self.age += 1
-        if self.age >= self.maxage:
+        if self.age >= self.lifespan:
             self.kill_agent()
+
+    def reset_traits(self):
+        # Reset traits for dead agents
+        self.age = 0
+        self.lifespan = 0
+        self.hardiness = 0
+        self.strength = 0
+        self.metabolism = 0
 
     def kill_agent(self):
         self.alive = False
-        self.reset_traits()  # Reset traits for consistency
+        # Resetting genome and traits
+        self.genome = None
+        self.reset_traits()
 
+# Simulation Logic
+        
+def isCoordinateInRange(n, x, y):
+    if x < 0 or x >= n:
+        return False
+    if y < 0 or y >= n:
+        return False
+    return True
 
-# Agent Logic
 def initialize_agent_matrix(n):
     return [[Agent() for j in range(n)] for i in range(n)]
 
 
 def calc_move(current_step, i, j, environment, agent_matrix):
+    #Check if current cell has live agent
     current_agent = agent_matrix[i][j]
     if not current_agent.alive:
         return
 
+    #Age Logic
     if config["enable_aging"] == True:
         current_agent.age_agent()
         if not current_agent.alive:
@@ -275,13 +242,14 @@ def calc_move(current_step, i, j, environment, agent_matrix):
     else:
         current_agent.age += 1
 
-    # Attempt to consume food and survive
+    # Food Consumption Logic
     if config["enable_food"] == True:
         survived = environment.calculate_food(i, j, current_step, current_agent.metabolism)
         if not survived:
             agent_matrix[i][j].kill_agent()
             return
 
+    #Reproduction Logic
     new_individual = Agent.reproduce_asexually(current_agent)
     diceroll = random.randint(1, 9)
     movement_offsets = {
@@ -298,6 +266,7 @@ def calc_move(current_step, i, j, environment, agent_matrix):
     di, dj = movement_offsets.get(diceroll, (0, 0))
     new_i, new_j = i + di, j + dj
 
+    # Hardiness and Strength Logic
     if isCoordinateInRange(environment.map_size, new_i, new_j) and \
        new_individual.hardiness > environment.level_difficulty[environment.world_matrix[new_i][new_j]]:
         if new_individual.strength > agent_matrix[new_i][new_j].strength:
@@ -345,6 +314,13 @@ def save_agent_matrix_image(matrix, file_name, attribute):
     plt.savefig(str(file_name))
     plt.close(fig)
 
+def get_image_from_fig(fig):
+    fig.canvas.draw()
+    image = np.frombuffer(fig.canvas.tostring_rgb(), dtype="uint8")
+    image = image.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+    return image
+
+
 
 # main game loop
 def run_game():
@@ -372,11 +348,10 @@ def run_game():
     agent_matrix = initialize_agent_matrix(environment.map_size)
 
     # Find starting position for the initial agent
-    agent_starting_pos = find_easiest_starting_location(environment.world_matrix)
+    agent_starting_pos = environment.find_easiest_starting_location()
 
     # Create initial agent
-    default_genome = Agent.generate_default_genome()
-    agent_matrix[agent_starting_pos[0]][agent_starting_pos[1]] = Agent.create_live_agent(genome=default_genome)
+    agent_matrix[agent_starting_pos[0]][agent_starting_pos[1]] = Agent.create_live_agent()
 
     visualize_world(environment.world_matrix)
     save_matrix_image(environment.world_matrix, "Game_World")
@@ -386,7 +361,7 @@ def run_game():
     strength_frames = []  
     hardiness_frames = []  
     age_frames = [] 
-    maxage_frames = [] 
+    lifespan_frames = [] 
     metabolism_frames = [] 
 
     # Declare plots for visualization
@@ -413,7 +388,7 @@ def run_game():
 
     fig4, ax4 = plt.subplots()
     im4 = ax4.imshow(
-        transform_matrix(agent_matrix, "maxage"), cmap="plasma", vmin=0, vmax=100
+        transform_matrix(agent_matrix, "lifespan"), cmap="plasma", vmin=0, vmax=100
     )
     ax4.set_title("Agent Max Lifespan")
     plt.colorbar(im3, ax=ax4)
@@ -448,7 +423,7 @@ def run_game():
             im1.set_data(transform_matrix(agent_matrix, "strength"))
             im2.set_data(transform_matrix(agent_matrix, "hardiness"))
             im3.set_data(transform_matrix(agent_matrix, "age"))
-            im4.set_data(transform_matrix(agent_matrix, "maxage"))
+            im4.set_data(transform_matrix(agent_matrix, "lifespan"))
             im5.set_data(transform_matrix(agent_matrix, "metabolism"))
 
             # Draw the updated data on the canvas
@@ -462,7 +437,7 @@ def run_game():
             strength_frames.append(get_image_from_fig(fig1))
             hardiness_frames.append(get_image_from_fig(fig2))
             age_frames.append(get_image_from_fig(fig3))
-            maxage_frames.append(get_image_from_fig(fig4))
+            lifespan_frames.append(get_image_from_fig(fig4))
             metabolism_frames.append(get_image_from_fig(fig5))
 
     plt.close(fig1)
@@ -474,7 +449,7 @@ def run_game():
     imageio.mimsave("strength_map.gif", strength_frames, fps=frame_rate)
     imageio.mimsave("hardiness_map.gif", hardiness_frames, fps=frame_rate)
     imageio.mimsave("age_map.gif", age_frames, fps=frame_rate)
-    imageio.mimsave("max_age_map.gif", maxage_frames, fps=frame_rate)
+    imageio.mimsave("lifespan_map.gif", lifespan_frames, fps=frame_rate)
     imageio.mimsave("metabolism.gif", metabolism_frames, fps=frame_rate)
 
     print("Simulation complete.\n")
