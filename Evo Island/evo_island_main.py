@@ -152,44 +152,48 @@ class Environment:
         
 
 # Agent Class
-import numpy as np
-
 class Agent:
+    common_ancestor_genome = np.array([20, 10, 5, 5])  # Set this as your common ancestor's genome
+    
     def __init__(self):
-        self.alive = False  # Agent starts as dead
-        self.genome = None  # No genome until specifically assigned
+        self.alive = False
+        self.genome = None
         self.age = 0
+        self.genetic_distance = None
         self.reset_traits()
 
     @classmethod
     def create_live_agent(cls, genome=None):
         live_agent = cls()
-        live_agent.alive = True  # This agent is alive
+        live_agent.alive = True
         live_agent.genome = genome if genome is not None else cls.generate_default_genome()
         live_agent.decode_genome()
+        live_agent.calculate_genetic_distance()  # Calculate genetic distance upon creation
         return live_agent
     
     def decode_genome(self):
-        # Map the genome vector directly to traits for simplicity
+        # Assuming the genome is directly mapping to traits for simplicity
         self.lifespan, self.hardiness, self.strength, self.metabolism = self.genome
 
     @staticmethod
     def generate_default_genome():
-        # Define default midrange values for the traits
-        default_values = np.array([20, 10, 5, 5])  # Example default values
-        return default_values
+        # Return the default genome, which could be the common ancestor's genome
+        return Agent.common_ancestor_genome.copy()
 
     @staticmethod
     def mutate_genome(genome):
-        # Apply mutations to each trait based on mutation rate and a normal distribution
-        mutation_rate= config["mutation_rate"]
+        mutation_rate = config["mutation_rate"]
         mutation_effects = np.zeros_like(genome)
         for i in range(len(genome)):
             if np.random.rand() < mutation_rate:
                 mutation_effects[i] = np.random.normal(loc=0, scale=2)
         mutated_genome = genome + mutation_effects
-        mutated_genome = np.clip(mutated_genome, 0, 100)  # Ensure traits remain within bounds
+        mutated_genome = np.clip(mutated_genome, 0, 100)
         return mutated_genome
+
+    def calculate_genetic_distance(self):
+        if self.genome is not None:
+            self.genetic_distance = np.linalg.norm(self.genome - Agent.common_ancestor_genome)
 
     @classmethod
     def reproduce_asexually(cls, parent_agent):
@@ -198,22 +202,28 @@ class Agent:
 
     def age_agent(self):
         self.age += 1
-        if self.age >= self.lifespan:
+        # Calculate the probability of death based on the current age and lifespan
+        death_probability = self.age / self.lifespan
+        
+        # Ensure that the probability does not exceed 1
+        death_probability = min(death_probability, 1)
+        
+        if random.random() < death_probability:
             self.kill_agent()
 
     def reset_traits(self):
-        # Reset traits for dead agents
         self.age = 0
         self.lifespan = 0
         self.hardiness = 0
         self.strength = 0
         self.metabolism = 0
+        self.genetic_distance = 0
 
     def kill_agent(self):
         self.alive = False
-        # Resetting genome and traits
         self.genome = None
         self.reset_traits()
+
 
 # Simulation Logic
         
@@ -362,7 +372,8 @@ def run_game():
     hardiness_frames = []  
     age_frames = [] 
     lifespan_frames = [] 
-    metabolism_frames = [] 
+    metabolism_frames = []
+    genetic_distance_frames = []
 
     # Declare plots for visualization
     fig1, ax1 = plt.subplots()
@@ -400,6 +411,13 @@ def run_game():
     ax5.set_title("Agent Metabolism")
     plt.colorbar(im5, ax=ax5)
 
+    fig6, ax6 = plt.subplots()
+    im6 = ax6.imshow(
+        transform_matrix(agent_matrix, "genetic_distance"), cmap="viridis", vmin=0, vmax=1000
+    )
+    ax6.set_title("Genetic Distance From Ancestor")
+    plt.colorbar(im6, ax=ax6)
+
 
     current_sim_step = 0
 
@@ -417,6 +435,7 @@ def run_game():
             break  
 
         current_sim_step += 1
+        print(f'\rSimulation Step {current_sim_step}/{simulation_steps}', end='')
 
         if current_sim_step % frame_save_interval == 0:
             # Draw canvas and convert attributes to an image array
@@ -425,6 +444,7 @@ def run_game():
             im3.set_data(transform_matrix(agent_matrix, "age"))
             im4.set_data(transform_matrix(agent_matrix, "lifespan"))
             im5.set_data(transform_matrix(agent_matrix, "metabolism"))
+            im6.set_data(transform_matrix(agent_matrix, "genetic_distance"))
 
             # Draw the updated data on the canvas
             fig1.canvas.draw()
@@ -432,6 +452,7 @@ def run_game():
             fig3.canvas.draw()
             fig4.canvas.draw()
             fig5.canvas.draw()
+            fig6.canvas.draw()
 
             # Convert the updated canvas to an image and append to respective frame lists
             strength_frames.append(get_image_from_fig(fig1))
@@ -439,18 +460,25 @@ def run_game():
             age_frames.append(get_image_from_fig(fig3))
             lifespan_frames.append(get_image_from_fig(fig4))
             metabolism_frames.append(get_image_from_fig(fig5))
+            genetic_distance_frames.append(get_image_from_fig(fig6))
 
     plt.close(fig1)
     plt.close(fig2)
     plt.close(fig3)
+    plt.close(fig4)
+    plt.close(fig5)
+    plt.close(fig6)
+    
 
     # Save final state
+    print()
     print("Generating gifs...")
     imageio.mimsave("strength_map.gif", strength_frames, fps=frame_rate)
     imageio.mimsave("hardiness_map.gif", hardiness_frames, fps=frame_rate)
     imageio.mimsave("age_map.gif", age_frames, fps=frame_rate)
     imageio.mimsave("lifespan_map.gif", lifespan_frames, fps=frame_rate)
     imageio.mimsave("metabolism.gif", metabolism_frames, fps=frame_rate)
+    imageio.mimsave("genetic_drift.gif", genetic_distance_frames, fps=frame_rate)
 
     print("Simulation complete.\n")
 

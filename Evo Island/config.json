@@ -1,15 +1,15 @@
 {
     "map_size": 500,
-    "simulation_steps": 100,
+    "simulation_steps": 2000,
     "use_perlin_noise": true,
     "use_random_params": false,
     "use_rivers": true,
-    "enable_food": false,
+    "enable_food": true,
     "enable_aging": true,
     "food_generation_rate": 2,
     "initial_food": 50,
     "max_food_capacity": 50,
-    "mutation_rate": 0.0034,
-    "frame_save_interval": 2,
+    "mutation_rate": 0.034,
+    "frame_save_interval": 3,
     "frame_rate": 30
 }
