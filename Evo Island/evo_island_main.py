@@ -6,6 +6,8 @@ import matplotlib.pyplot as plt
 import imageio
 import json
 import os
+from datetime import datetime
+
 
 # Config
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
@@ -224,6 +226,58 @@ class Agent:
         self.genome = None
         self.reset_traits()
 
+class SimulationMetrics:
+    def __init__(self):
+        self.cumulative_deaths = 0
+        self.deaths_from_aging = 0
+        self.death_from_competition = 0
+        self.deaths_from_starvation = 0
+        self.deaths_from_exposure = 0
+        self.total_age = 0  # Use this to calculate average_age
+        self.total_lifespan = 0  # Use this for average_lifespan
+        self.total_strength = 0
+        self.total_hardiness = 0
+        self.total_metabolism = 0
+        self.population_count = 0  # Keep track of the population to calculate averages
+
+    def update_death_metrics(self, death_type):
+        self.cumulative_deaths += 1
+        if death_type == "aging":
+            self.deaths_from_aging += 1
+        elif death_type == "competition":
+            self.death_from_competition += 1
+        elif death_type == "starvation":
+            self.deaths_from_starvation += 1
+        elif death_type == "exposure":
+            self.deaths_from_exposure += 1
+
+    def update_agent_metrics(self, agent):
+        # Call this for each agent to accumulate stats
+        self.total_age += agent.age
+        self.total_lifespan += agent.lifespan
+        self.total_strength += agent.strength
+        self.total_hardiness += agent.hardiness
+        self.total_metabolism += agent.metabolism
+        self.population_count += 1
+
+    def calculate_averages(self):
+        # Ensure division by zero is handled
+        population = max(self.population_count, 1)
+        self.average_age = self.total_age / population
+        self.average_lifespan = self.total_lifespan / population
+        self.average_strength = self.total_strength / population
+        self.average_hardiness = self.total_hardiness / population
+        self.average_metabolism = self.total_metabolism / population
+
+    def reset_for_next_step(self):
+        # Reset total stats (but not cumulative ones) for the next calculation step
+        self.total_age = 0
+        self.total_lifespan = 0
+        self.total_strength = 0
+        self.total_hardiness = 0
+        self.total_metabolism = 0
+        self.population_count = 0
+
 
 # Simulation Logic
         
@@ -238,10 +292,12 @@ def initialize_agent_matrix(n):
     return [[Agent() for j in range(n)] for i in range(n)]
 
 
-def calc_move(current_step, i, j, environment, agent_matrix):
+def simulate(current_step, i, j, environment, agent_matrix, metrics):
     #Check if current cell has live agent
     current_agent = agent_matrix[i][j]
     if not current_agent.alive:
+        metrics.cumulative
+        #Aging death ++
         return
 
     #Age Logic
@@ -257,6 +313,7 @@ def calc_move(current_step, i, j, environment, agent_matrix):
         survived = environment.calculate_food(i, j, current_step, current_agent.metabolism)
         if not survived:
             agent_matrix[i][j].kill_agent()
+            #Starvation death ++
             return
 
     #Reproduction Logic
@@ -281,8 +338,9 @@ def calc_move(current_step, i, j, environment, agent_matrix):
        new_individual.hardiness > environment.level_difficulty[environment.world_matrix[new_i][new_j]]:
         if new_individual.strength > agent_matrix[new_i][new_j].strength:
             agent_matrix[new_i][new_j] = new_individual
-
-
+            #Competition ++
+    
+    #else exposure ++
 
 # Matrix Creation, Visualization, Saving
 def visualize_world(matrix):
@@ -334,12 +392,26 @@ def get_image_from_fig(fig):
 
 # main game loop
 def run_game():
+
+     # Generate a timestamped folder name
+    timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+    results_dir = os.path.join('Experimental_Results', timestamp)
+
+    #Create logger for metrics tracking
+    metrics = SimulationMetrics()
+
+    # Ensure the base directory exists
+    if not os.path.exists('Experimental_Results'):
+        os.makedirs('Experimental_Results')
+
+    # Create the timestamped directory for this run
+    os.makedirs(results_dir)
+
     # Use the map configurations
     simulation_steps = config["simulation_steps"]
     frame_save_interval = config["frame_save_interval"]
     frame_rate = config["frame_rate"]
 
-     # Print initial state
     # Print initial state and game parameters
     print("Game Parameters:")
     print("Map size =", config["map_size"])
@@ -351,8 +423,17 @@ def run_game():
     print("Simulation Steps:", config["simulation_steps"])
     print()
 
+    # Save the config of the experimental run
+    config_file_path = os.path.join(results_dir, 'config.json')
+    with open(config_file_path, 'w') as f:
+        json.dump(config, f, indent=4)
+
     # Initialize the environment
     environment = Environment(config)
+
+    #Visualize and save enviroment
+    visualize_world(environment.world_matrix)
+    save_matrix_image(environment.world_matrix, os.path.join(results_dir,"Game_World"))
 
     # Initialize the agent matrix
     agent_matrix = initialize_agent_matrix(environment.map_size)
@@ -363,11 +444,8 @@ def run_game():
     # Create initial agent
     agent_matrix[agent_starting_pos[0]][agent_starting_pos[1]] = Agent.create_live_agent()
 
-    visualize_world(environment.world_matrix)
-    save_matrix_image(environment.world_matrix, "Game_World")
 
-    # Main game loop
-    print("Running Simulation...\n")
+    #Data frames for gif generation
     strength_frames = []  
     hardiness_frames = []  
     age_frames = [] 
@@ -413,12 +491,13 @@ def run_game():
 
     fig6, ax6 = plt.subplots()
     im6 = ax6.imshow(
-        transform_matrix(agent_matrix, "genetic_distance"), cmap="viridis", vmin=0, vmax=1000
+        transform_matrix(agent_matrix, "genetic_distance"), cmap="viridis", vmin=0, vmax=200
     )
     ax6.set_title("Genetic Distance From Ancestor")
     plt.colorbar(im6, ax=ax6)
 
-
+     # Main game loop
+    print("Running Simulation...\n")
     current_sim_step = 0
 
     while current_sim_step < simulation_steps:
@@ -428,9 +507,11 @@ def run_game():
             for j in range(len(agent_matrix[0])):
                 if agent_matrix[i][j].alive:
                     living_agents_count += 1
-                    calc_move(current_sim_step, i, j, environment, agent_matrix)
+                    simulate(current_sim_step, i, j, environment, agent_matrix, metrics)
+                    #Stream Metrics to file here
 
         if living_agents_count == 0:
+            print()
             print("All agents have died. Ending simulation at step", current_sim_step)
             break  
 
@@ -473,12 +554,12 @@ def run_game():
     # Save final state
     print()
     print("Generating gifs...")
-    imageio.mimsave("strength_map.gif", strength_frames, fps=frame_rate)
-    imageio.mimsave("hardiness_map.gif", hardiness_frames, fps=frame_rate)
-    imageio.mimsave("age_map.gif", age_frames, fps=frame_rate)
-    imageio.mimsave("lifespan_map.gif", lifespan_frames, fps=frame_rate)
-    imageio.mimsave("metabolism.gif", metabolism_frames, fps=frame_rate)
-    imageio.mimsave("genetic_drift.gif", genetic_distance_frames, fps=frame_rate)
+    imageio.mimsave(os.path.join(results_dir, "strength_map.gif"), strength_frames, fps=frame_rate)
+    imageio.mimsave(os.path.join(results_dir, "hardiness_map.gif"), hardiness_frames, fps=frame_rate)
+    imageio.mimsave(os.path.join(results_dir, "age_map.gif"), age_frames, fps=frame_rate)
+    imageio.mimsave(os.path.join(results_dir, "lifespan_map.gif"), lifespan_frames, fps=frame_rate)
+    imageio.mimsave(os.path.join(results_dir, "metabolism_map.gif"), metabolism_frames, fps=frame_rate)
+    imageio.mimsave(os.path.join(results_dir, "genetic_drift_map.gif"), genetic_distance_frames, fps=frame_rate)
 
     print("Simulation complete.\n")
 
