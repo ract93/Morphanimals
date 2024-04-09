@@ -228,28 +228,25 @@ class Agent:
 
 class SimulationMetrics:
     def __init__(self):
+        self.population_count = 0  # Keep track of the population to calculate averages
         self.cumulative_deaths = 0
         self.deaths_from_aging = 0
         self.death_from_competition = 0
         self.deaths_from_starvation = 0
         self.deaths_from_exposure = 0
+
         self.total_age = 0  # Use this to calculate average_age
         self.total_lifespan = 0  # Use this for average_lifespan
         self.total_strength = 0
         self.total_hardiness = 0
         self.total_metabolism = 0
-        self.population_count = 0  # Keep track of the population to calculate averages
 
-    def update_death_metrics(self, death_type):
-        self.cumulative_deaths += 1
-        if death_type == "aging":
-            self.deaths_from_aging += 1
-        elif death_type == "competition":
-            self.death_from_competition += 1
-        elif death_type == "starvation":
-            self.deaths_from_starvation += 1
-        elif death_type == "exposure":
-            self.deaths_from_exposure += 1
+        self.average_age = 0
+        self.average_lifespan = 0
+        self.average_strength = 0
+        self.average_metabolism = 0
+        self.average_hardiness = 0
+
 
     def update_agent_metrics(self, agent):
         # Call this for each agent to accumulate stats
@@ -278,6 +275,16 @@ class SimulationMetrics:
         self.total_metabolism = 0
         self.population_count = 0
 
+    def print_current_state(self):
+        # Format and print the current state in a single line
+        print(f"Population: {self.population_count}, "
+              f"Cumulative Deaths: {self.cumulative_deaths} (Deaths by Aging: {self.deaths_from_aging}, "
+              f"Deaths by Competition: {self.death_from_competition}, Deaths by Starvation: {self.deaths_from_starvation}, "
+              f"Deaths by Exposure: {self.deaths_from_exposure}), "
+              f"Avg Age: {self.average_age:.2f}, Avg Lifespan: {self.average_lifespan:.2f}, "
+              f"Avg Strength: {self.average_strength:.2f}, "
+              f"Avg Hardiness: {self.average_hardiness:.2f}, "
+              f"Avg Metabolism: {self.average_metabolism:.2f}")
 
 # Simulation Logic
         
@@ -292,31 +299,34 @@ def initialize_agent_matrix(n):
     return [[Agent() for j in range(n)] for i in range(n)]
 
 
-def simulate(current_step, i, j, environment, agent_matrix, metrics):
-    #Check if current cell has live agent
+def simulateTimeStep(current_step, i, j, environment, agent_matrix, metrics):
+    # Check if current cell has a live agent
     current_agent = agent_matrix[i][j]
     if not current_agent.alive:
-        metrics.cumulative
-        #Aging death ++
         return
+    
+    #Update agent metrics
+    metrics.update_agent_metrics(current_agent)
 
-    #Age Logic
-    if config["enable_aging"] == True:
+    # Age Logic
+    if config["enable_aging"]:
+        was_alive_before_aging = current_agent.alive
         current_agent.age_agent()
-        if not current_agent.alive:
+        if not current_agent.alive and was_alive_before_aging:
+            metrics.deaths_from_aging += 1
+            metrics.cumulative_deaths += 1
             return
-    else:
-        current_agent.age += 1
 
     # Food Consumption Logic
-    if config["enable_food"] == True:
+    if config["enable_food"]:
         survived = environment.calculate_food(i, j, current_step, current_agent.metabolism)
         if not survived:
             agent_matrix[i][j].kill_agent()
-            #Starvation death ++
+            metrics.deaths_from_starvation += 1
+            metrics.cumulative_deaths += 1
             return
 
-    #Reproduction Logic
+    # At this point, agent has survived current turn and reproduces.
     new_individual = Agent.reproduce_asexually(current_agent)
     diceroll = random.randint(1, 9)
     movement_offsets = {
@@ -333,14 +343,25 @@ def simulate(current_step, i, j, environment, agent_matrix, metrics):
     di, dj = movement_offsets.get(diceroll, (0, 0))
     new_i, new_j = i + di, j + dj
 
-    # Hardiness and Strength Logic
-    if isCoordinateInRange(environment.map_size, new_i, new_j) and \
-       new_individual.hardiness > environment.level_difficulty[environment.world_matrix[new_i][new_j]]:
-        if new_individual.strength > agent_matrix[new_i][new_j].strength:
-            agent_matrix[new_i][new_j] = new_individual
-            #Competition ++
-    
-    #else exposure ++
+    #Check if movement is within the map
+    if isCoordinateInRange(environment.map_size, new_i, new_j):
+        #Check if agent is hardy enough to ocupy the cell.
+        if new_individual.hardiness > environment.level_difficulty[environment.world_matrix[new_i][new_j]]:
+            if agent_matrix[new_i][new_j].alive:
+                # In a competition scenario, one agent always dies in the deathmatch
+                metrics.death_from_competition += 1
+                metrics.cumulative_deaths += 1
+                if new_individual.strength > agent_matrix[new_i][new_j].strength:
+                    agent_matrix[new_i][new_j] = new_individual
+                # If the new individual is weaker or equal in strength, it dies, and no change is made to the cell
+            else:
+                # The prospective cell is empty, the new individual just occupies it with no competition
+                agent_matrix[new_i][new_j] = new_individual
+        else:
+            # New individual dies from exposure as it wasnt hardy enough
+            metrics.deaths_from_exposure += 1
+            metrics.cumulative_deaths += 1
+
 
 # Matrix Creation, Visualization, Saving
 def visualize_world(matrix):
@@ -445,7 +466,7 @@ def run_game():
     agent_matrix[agent_starting_pos[0]][agent_starting_pos[1]] = Agent.create_live_agent()
 
 
-    #Data frames for gif generation
+    #Declare data frames for gif generation
     strength_frames = []  
     hardiness_frames = []  
     age_frames = [] 
@@ -507,16 +528,22 @@ def run_game():
             for j in range(len(agent_matrix[0])):
                 if agent_matrix[i][j].alive:
                     living_agents_count += 1
-                    simulate(current_sim_step, i, j, environment, agent_matrix, metrics)
-                    #Stream Metrics to file here
+                    simulateTimeStep(current_sim_step, i, j, environment, agent_matrix, metrics)
+
+        #Calculate and Collect Metrics
+        metrics.calculate_averages()
+        metrics.print_current_state()
+        print()  
+        metrics.reset_for_next_step()
+
+        current_sim_step += 1
+        print(f'\rSimulation Step {current_sim_step}/{simulation_steps}', end='')
+        print()
 
         if living_agents_count == 0:
             print()
             print("All agents have died. Ending simulation at step", current_sim_step)
             break  
-
-        current_sim_step += 1
-        print(f'\rSimulation Step {current_sim_step}/{simulation_steps}', end='')
 
         if current_sim_step % frame_save_interval == 0:
             # Draw canvas and convert attributes to an image array

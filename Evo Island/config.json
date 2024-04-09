@@ -1,6 +1,6 @@
 {
-    "map_size": 1000,
-    "simulation_steps": 100,
+    "map_size": 500,
+    "simulation_steps": 1000,
     "use_perlin_noise": true,
     "use_random_params": false,
     "use_rivers": true,
