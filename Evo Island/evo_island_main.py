@@ -1,10 +1,13 @@
 import noise
 from noise import pnoise2
 import numpy as np
+import nbformat as nbf
+from nbconvert.preprocessors import ExecutePreprocessor
 import random
 import matplotlib.pyplot as plt
 import imageio
 import json
+import csv
 import os
 from datetime import datetime
 
@@ -72,6 +75,8 @@ class Environment:
             world = (world - np.min(world)) * (5 - 1) / (np.max(world) - np.min(world)) + 1
             world = np.round(world)
             return world.astype(int)
+        
+        #Petri dish here
 
         else:
             return [[random.randint(1, 3) for _ in range(self.map_size)] for _ in range(self.map_size)]
@@ -226,6 +231,7 @@ class Agent:
         self.genome = None
         self.reset_traits()
 
+
 class SimulationMetrics:
     def __init__(self):
         self.population_count = 0  # Keep track of the population to calculate averages
@@ -247,6 +253,42 @@ class SimulationMetrics:
         self.average_metabolism = 0
         self.average_hardiness = 0
 
+        # CSV logging fields
+        self.csv_logging_enabled = False
+
+    def enable_csv_logging(self, filepath):
+        self.csv_logging_enabled = True
+        self.filepath = filepath
+        self.fields = ['Timestep', 'Population Count', 'Cumulative Deaths', 'Deaths from Aging',
+                       'Deaths from Competition', 'Deaths from Starvation', 'Deaths from Exposure',
+                       'Average Age', 'Average Lifespan', 'Average Strength', 'Average Hardiness',
+                       'Average Metabolism']
+        self.csv_file = open(self.filepath, 'w', newline='', buffering=1)  # Line buffering
+        self.writer = csv.DictWriter(self.csv_file, fieldnames=self.fields)
+        self.writer.writeheader()
+
+    def log_metrics(self, timestep):
+        if not self.csv_logging_enabled:
+            return
+        row = {
+            'Timestep': timestep,
+            'Population Count': self.population_count,
+            'Cumulative Deaths': self.cumulative_deaths,
+            'Deaths from Aging': self.deaths_from_aging,
+            'Deaths from Competition': self.death_from_competition,
+            'Deaths from Starvation': self.deaths_from_starvation,
+            'Deaths from Exposure': self.deaths_from_exposure,
+            'Average Age': self.average_age,
+            'Average Lifespan': self.average_lifespan,
+            'Average Strength': self.average_strength,
+            'Average Hardiness': self.average_hardiness,
+            'Average Metabolism': self.average_metabolism,
+        }
+        self.writer.writerow(row)
+
+    def close_csv_logging(self):
+        if self.csv_logging_enabled:
+            self.csv_file.close()
 
     def update_agent_metrics(self, agent):
         # Call this for each agent to accumulate stats
@@ -410,6 +452,78 @@ def get_image_from_fig(fig):
     return image
 
 
+def create_analysis_notebook(csv_file_path, notebook_path):
+    # Create a new notebook object
+    nb = nbf.v4.new_notebook()
+    
+    # Add cells with the necessary code
+    cells = []
+
+    # Cell to import libraries
+    cells.append(nbf.v4.new_code_cell("""\
+import pandas as pd
+import json
+import matplotlib.pyplot as plt
+import seaborn as sns
+sns.set(style='whitegrid')"""))
+
+    # Cell to load data
+    cells.append(nbf.v4.new_code_cell(f"""\
+data = pd.read_csv('{csv_file_path}')"""))
+
+    # Cell to calculate statistical metrics
+    cells.append(nbf.v4.new_code_cell("""\
+# Display basic statistics
+data.describe()"""))
+
+    # Cell to plot gene value averages over time
+    cells.append(nbf.v4.new_code_cell("""\
+plt.figure(figsize=(12, 6))
+plt.plot(data['Timestep'], data['Average Lifespan'], label='Average Maximum Lifespan')
+plt.plot(data['Timestep'], data['Average Strength'], label='Average Strength')
+plt.plot(data['Timestep'], data['Average Hardiness'], label='Average Hardiness')
+plt.plot(data['Timestep'], data['Average Metabolism'], label='Average Metabolism')
+plt.xlabel('Timestep')
+plt.ylabel('Value')
+plt.title('Time Series of Average Gene Values')
+plt.legend()
+plt.show()"""))
+    
+    # Cell to plot deaths over time
+    cells.append(nbf.v4.new_code_cell("""\
+plt.figure(figsize=(12, 6))
+plt.plot(data['Timestep'], data['Deaths from Aging'], label='Deaths from Aging')
+plt.plot(data['Timestep'], data['Deaths from Competition'], label='Deaths from Competition')
+plt.plot(data['Timestep'], data['Deaths from Starvation'], label='Deaths from Starvation')
+plt.plot(data['Timestep'], data['Deaths from Exposure'], label='Deaths from Exposure')
+
+plt.xlabel('Timestep')
+plt.ylabel('Value')
+plt.title('Time Series of Cause of Agent Death')
+plt.legend()
+plt.show()"""))
+
+    # Add cells to the notebook
+    nb['cells'] = cells
+    
+    # Write the notebook to a new file
+    with open(notebook_path, 'w') as f:
+        nbf.write(nb, f)
+    
+    print(f"Notebook created at {notebook_path}")
+
+    # Optionally execute the notebook
+    ep = ExecutePreprocessor(timeout=600, kernel_name='python3')
+    ep.preprocess(nb, {'metadata': {'path': '.'}})
+
+    # Save the executed notebook
+    with open(notebook_path.replace(".ipynb", "_executed.ipynb"), 'w', encoding='utf-8') as f:
+        nbf.write(nb, f)
+
+    print(f"Executed notebook saved at {notebook_path.replace('.ipynb', '_executed.ipynb')}")
+
+
+
 
 # main game loop
 def run_game():
@@ -418,15 +532,17 @@ def run_game():
     timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
     results_dir = os.path.join('Experimental_Results', timestamp)
 
-    #Create logger for metrics tracking
-    metrics = SimulationMetrics()
-
     # Ensure the base directory exists
     if not os.path.exists('Experimental_Results'):
         os.makedirs('Experimental_Results')
 
     # Create the timestamped directory for this run
     os.makedirs(results_dir)
+
+     #Create logger for metrics tracking
+    metrics = SimulationMetrics()
+    csv_file_path = os.path.join(results_dir, 'simulation_metrics.csv')
+    metrics.enable_csv_logging(csv_file_path)
 
     # Use the map configurations
     simulation_steps = config["simulation_steps"]
@@ -517,6 +633,7 @@ def run_game():
     ax6.set_title("Genetic Distance From Ancestor")
     plt.colorbar(im6, ax=ax6)
 
+
      # Main game loop
     print("Running Simulation...\n")
     current_sim_step = 0
@@ -532,6 +649,7 @@ def run_game():
 
         #Calculate and Collect Metrics
         metrics.calculate_averages()
+        metrics.log_metrics(current_sim_step)
         metrics.print_current_state()
         print()  
         metrics.reset_for_next_step()
@@ -576,17 +694,29 @@ def run_game():
     plt.close(fig4)
     plt.close(fig5)
     plt.close(fig6)
+
+    gifs_dir = os.path.join(results_dir, "Gifs")
+    os.makedirs(gifs_dir, exist_ok=True)
     
 
     # Save final state
     print()
     print("Generating gifs...")
-    imageio.mimsave(os.path.join(results_dir, "strength_map.gif"), strength_frames, fps=frame_rate)
-    imageio.mimsave(os.path.join(results_dir, "hardiness_map.gif"), hardiness_frames, fps=frame_rate)
-    imageio.mimsave(os.path.join(results_dir, "age_map.gif"), age_frames, fps=frame_rate)
-    imageio.mimsave(os.path.join(results_dir, "lifespan_map.gif"), lifespan_frames, fps=frame_rate)
-    imageio.mimsave(os.path.join(results_dir, "metabolism_map.gif"), metabolism_frames, fps=frame_rate)
-    imageio.mimsave(os.path.join(results_dir, "genetic_drift_map.gif"), genetic_distance_frames, fps=frame_rate)
+    imageio.mimsave(os.path.join(gifs_dir, "strength_map.gif"), strength_frames, fps=frame_rate)
+    imageio.mimsave(os.path.join(gifs_dir, "hardiness_map.gif"), hardiness_frames, fps=frame_rate)
+    imageio.mimsave(os.path.join(gifs_dir, "age_map.gif"), age_frames, fps=frame_rate)
+    imageio.mimsave(os.path.join(gifs_dir, "lifespan_map.gif"), lifespan_frames, fps=frame_rate)
+    imageio.mimsave(os.path.join(gifs_dir, "metabolism_map.gif"), metabolism_frames, fps=frame_rate)
+    imageio.mimsave(os.path.join(gifs_dir, "genetic_drift_map.gif"), genetic_distance_frames, fps=frame_rate)
+
+    #Close metrics file
+    metrics.close_csv_logging()
+
+    #Create metrics notebook
+    csv_file_path = os.path.join(results_dir, 'simulation_metrics.csv')
+    notebook_path = os.path.join(results_dir, 'analysis_notebook.ipynb')
+    create_analysis_notebook(csv_file_path, notebook_path)
+
 
     print("Simulation complete.\n")
 
