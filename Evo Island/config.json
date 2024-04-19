@@ -1,10 +1,10 @@
 {
     "map_size": 500,
-    "simulation_steps": 1000,
+    "simulation_steps": 100,
     "use_perlin_noise": true,
-    "use_random_params": false,
+    "use_random_perlin_params": false, 
     "use_rivers": true,
-    "enable_food": true,
+    "enable_food": false,
     "enable_aging": true,
     "enable_reproduction_threshold": true,
     "food_generation_rate": 4,

@@ -27,7 +27,7 @@ class Environment:
         self.map_size = config["map_size"]
         self.world_matrix = self.generate_island(
             use_perlin_noise=config["use_perlin_noise"],
-            use_random_params=config["use_random_params"],
+            use_random_perlin_params=config["use_random_perlin_params"],
             use_rivers=config["use_rivers"],
         )
         self.food_matrix = self.initialize_food_matrix()
@@ -88,9 +88,9 @@ class Environment:
             ]
 
     def generate_island(
-        self, use_perlin_noise=True, use_random_params=True, use_rivers=True
+        self, use_perlin_noise=True, use_random_perlin_params=True, use_rivers=True
     ):
-        world = self.generate_terrain(use_perlin_noise, use_random_params)
+        world = self.generate_terrain(use_perlin_noise, use_random_perlin_params)
         if use_rivers:
             world = self.generate_river(world)  # Passing world matrix as argument
         return world
@@ -444,7 +444,7 @@ def simulateAgentTimeStep(current_step, i, j, environment, agent_matrix, metrics
             metrics.cumulative_deaths += 1
             return
         
-    if config["enable_reproduction_threshold"]:
+    if config["enable_reproduction_threshold"] and config["enable_food"]:
         
         can_reproduce = current_agent.energy_reserves >= current_agent.reproduction_threshold
         if can_reproduce:
@@ -479,6 +479,7 @@ def simulateAgentTimeStep(current_step, i, j, environment, agent_matrix, metrics
                     if agent_matrix[new_i][new_j].alive:
                         metrics.death_from_competition += 1
                         metrics.cumulative_deaths += 1
+                        # One or the other agent in comeptition dies, so its safe to increment here.
                         if new_individual.strength > agent_matrix[new_i][new_j].strength:
                             agent_matrix[new_i][new_j] = new_individual
                             return
@@ -491,7 +492,10 @@ def simulateAgentTimeStep(current_step, i, j, environment, agent_matrix, metrics
                     # New individual dies from exposure as it wasnt hardy enough
                     metrics.deaths_from_exposure += 1
                     metrics.cumulative_deaths += 1
-                    return
+                    return    
+        else: 
+            # Original Agent lives but doesnt reproduce
+            return
 
     else: #Food and Reproduction_Threshold Logic is off
         # At this point, agent has survived current turn and reproduces if it has enough food to meet threshold.
@@ -520,6 +524,7 @@ def simulateAgentTimeStep(current_step, i, j, environment, agent_matrix, metrics
                 > environment.level_difficulty[environment.world_matrix[new_i][new_j]]
             ):
                 if agent_matrix[new_i][new_j].alive:
+                    # One or the other agent in comeptition dies, so its safe to increment here.
                     metrics.death_from_competition += 1
                     metrics.cumulative_deaths += 1
                     if new_individual.strength > agent_matrix[new_i][new_j].strength:
@@ -535,19 +540,6 @@ def simulateAgentTimeStep(current_step, i, j, environment, agent_matrix, metrics
 
 
 # Matrix Creation, Visualization, Saving
-def visualize_world(matrix):
-    fig, ax = plt.subplots()
-    ax.set_title("Game World")
-
-    # Generate the image data based on the specified attribute
-    im = ax.imshow(matrix, cmap="viridis")
-
-    # Create and configure the colorbar
-    cbar = plt.colorbar(im, ax=ax)
-
-    plt.show()
-
-
 def transform_matrix(agent_matrix, attribute):
     return [[getattr(agent, attribute, 0) for agent in row] for row in agent_matrix]
 
@@ -663,19 +655,21 @@ plt.show()"""
 
     print(f"Notebook created at {notebook_path}")
 
-    # Optionally execute the notebook
-    ep = ExecutePreprocessor(timeout=600, kernel_name="python3")
-    ep.preprocess(nb, {"metadata": {"path": "."}})
+    # Try to execute the notebook and handle exceptions
+    executed_notebook_path = notebook_path.replace(".ipynb", "_executed.ipynb")
+    try:
+        ep = ExecutePreprocessor(timeout=600, kernel_name='python3')
+        ep.preprocess(nb, {'metadata': {'path': './'}})
+        with open(executed_notebook_path, "w", encoding="utf-8") as f:
+            nbf.write(nb, f)
+        print("Executed notebook saved at", executed_notebook_path)
+        # Delete the original unexecuted notebook if execution is successful
+        os.remove(notebook_path)
 
-    # Save the executed notebook
-    with open(
-        notebook_path.replace(".ipynb", "_executed.ipynb"), "w", encoding="utf-8"
-    ) as f:
-        nbf.write(nb, f)
+    except Exception as e:
+        print("Error during notebook execution:", e)
 
-    print(
-        f"Executed notebook saved at {notebook_path.replace('.ipynb', '_executed.ipynb')}"
-    )
+    print("Notebook creation process complete.")
 
 
 # main game loop
@@ -706,7 +700,7 @@ def run_game():
     print("Game Parameters:")
     print("Map size =", config["map_size"])
     print("Perlin Noise:", config["use_perlin_noise"])
-    print("Random Params:", config["use_random_params"])
+    print("Random Params:", config["use_random_perlin_params"])
     print("Rivers:", config["use_rivers"])
     print("Food Simulation:", config["enable_food"])
     print("Aging Simulation:", config["enable_aging"])
@@ -714,15 +708,25 @@ def run_game():
     print()
 
     # Save the config of the experimental run
-    config_file_path = os.path.join(results_dir, "config.json")
+    #config_file_path = os.path.join(results_dir, "config.json")
+    #with open(config_file_path, "w") as f:
+     #   json.dump(config, f, indent=4)
+
+    # Save the config of the experimental run as a text file
+    config_file_path = os.path.join(results_dir, "config.txt")
     with open(config_file_path, "w") as f:
-        json.dump(config, f, indent=4)
+        # Write the configuration in a pretty-printed JSON-like format for readability
+        for key, value in config.items():
+            f.write(f'{key}: {value}\n')
+            if isinstance(value, dict):  # Handle nested dictionaries
+                for sub_key, sub_value in value.items():
+                    f.write(f'  {sub_key}: {sub_value}\n')
+
 
     # Initialize the environment
     environment = Environment(config)
 
-    # Visualize and save enviroment
-    visualize_world(environment.world_matrix)
+    #Save enviroment
     save_matrix_image(environment.world_matrix, os.path.join(results_dir, "Game_World"))
 
     # Initialize the agent matrix
