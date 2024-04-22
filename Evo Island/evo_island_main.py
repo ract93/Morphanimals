@@ -11,7 +11,7 @@ import noise
 import numpy as np
 from nbconvert.preprocessors import ExecutePreprocessor
 from noise import pnoise2
-
+from PIL import Image
 # Config
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
@@ -165,8 +165,6 @@ class Environment:
         new_food_amount = max(previous_food_amount - food_consumed, 0)
         self.food_matrix[i][j] = (new_food_amount, current_step)
         
-
-
     def find_easiest_starting_location(self):
         for i, row in enumerate(self.world_matrix):
             for j, difficulty in enumerate(row):
@@ -177,77 +175,87 @@ class Environment:
 
 # Agent Class
 class Agent:
-    common_ancestor_genome = np.array(
-        [20, 10, 5, 5, 3]
-    )  #common ancestor's genome
+    # Common ancestor genome; each value represents different traits
+    common_ancestor_genome = np.array([20, 10, 5, 5, 3])
 
-    def __init__(self):
+    def __init__(self): #Initialize a dead agent
         self.alive = False
         self.genome = None
         self.age = 0
         self.energy_reserves = 0
-        self.genetic_distance = None
+        self.genetic_distance = 0
+        self.use_energy_budget = config["use_energy_budget"]
+        self.energy_budget = 0
         self.reset_traits()
 
     @classmethod
-    def create_live_agent(cls, genome=None):
+    def create_initial_agent(cls, genome=None):
         live_agent = cls()
         live_agent.alive = True
-        live_agent.genome = (
-            genome if genome is not None else cls.generate_default_genome()
-        )
+        live_agent.genome = genome if genome is not None else cls.generate_default_genome()
         live_agent.decode_genome()
-        live_agent.calculate_genetic_distance()  # Calculate genetic distance from ancestor
-        live_agent.energy_reserves = 5
+        live_agent.calculate_genetic_distance()
+        live_agent.energy_reserves = 10
         return live_agent
 
     def decode_genome(self):
-        # Explicit mapping of genome indices to traits for clarity
         if self.genome is not None:
-            self.lifespan = self.genome[0]
-            self.hardiness = self.genome[1]
-            self.strength = self.genome[2]
-            self.metabolism = self.genome[3]
-            self.reproduction_threshold = self.genome[4]
+            self.lifespan = max(1, self.genome[0])
+            self.hardiness = max(1, self.genome[1])
+            self.strength = max(1, self.genome[2])
+            self.metabolism = max(1, self.genome[3])
+            self.reproduction_threshold = max(1, self.genome[4])
+            if self.use_energy_budget:
+                self.update_energy_budget()
+
+    def update_energy_budget(self):
+        base_metabolic_rate = 5  # Basic energy requirement
+        activity_level_factor = 1 + 0.1 * (self.strength + self.hardiness) / 20  # Increased by physical traits
+        self.energy_budget = max(1, self.metabolism * activity_level_factor - base_metabolic_rate)
+
+    def allocate_energy_budget(self):
+    # Costs reflect the trade-off in biological terms
+        trait_costs = {
+            'lifespan': 2 - 0.1 * self.reproduction_threshold,  # Longer lifespan reduces frequent reproduction
+            'hardiness': 3 - 0.1 * self.metabolism,  # More hardy, less need for high metabolism
+            'strength': 5 + 0.1 * self.hardiness,    # Greater strength increases with hardiness
+            'metabolism': 2,                         # Constant cost for metabolism
+            'reproduction_threshold': 1 + 0.2 * self.lifespan  # Higher reproduction cost with longevity
+        }
+
+        total_cost = sum([getattr(self, trait) * cost for trait, cost in trait_costs.items()])
+        if total_cost > self.energy_budget:
+            scale_factor = self.energy_budget / total_cost
+            for trait, cost in trait_costs.items():
+                current_value = getattr(self, trait)
+                scaled_value = max(1, int(current_value * scale_factor))
+                setattr(self, trait, scaled_value)
+
 
     @staticmethod
     def generate_default_genome():
-        # Return the default genome, which could be the common ancestor's genome
         return Agent.common_ancestor_genome.copy()
 
     @staticmethod
     def mutate_genome(genome):
-        mutation_rate = config["mutation_rate"]
-        mutation_effects = np.zeros_like(genome)
-        for i in range(len(genome)):
-            if np.random.rand() < mutation_rate:
-                mutation_effects[i] = np.random.normal(loc=0, scale=2)
-        mutated_genome = genome + mutation_effects
-        mutated_genome = np.clip(mutated_genome, 0, 100)
-        return mutated_genome
+        mutation_rate = 0.05  # Example mutation rate
+        mutation_effects = np.random.normal(loc=0, scale=2, size=genome.shape)
+        return np.clip(genome + mutation_effects * (np.random.rand(*genome.shape) < mutation_rate), 0, 100)
 
     def calculate_genetic_distance(self):
-        if self.genome is not None:
-            self.genetic_distance = np.linalg.norm(
-                self.genome - Agent.common_ancestor_genome
-            )
+        self.genetic_distance = np.linalg.norm(self.genome - Agent.common_ancestor_genome)
 
     @classmethod
     def reproduce_asexually(cls, parent_agent):
         child_genome = cls.mutate_genome(parent_agent.genome)
-        return cls.create_live_agent(child_genome)
+        return cls.create_initial_agent(child_genome)
 
     def age_agent(self):
         self.age += 1
-        # Calculate the probability of death based on the current age and lifespan
-        death_probability = self.age / self.lifespan
-
-        # Ensure that the probability does not exceed 1
-        death_probability = min(death_probability, 1)
-
+        death_probability = min(self.age / max(1, self.lifespan), 1)  # Safe check
         if random.random() < death_probability:
             self.kill_agent()
-    
+
     def consume_food(self, food_consumed):
         self.energy_reserves += food_consumed
 
@@ -272,15 +280,27 @@ class Agent:
 
 class SimulationMetrics:
     def __init__(self):
-        self.population_count = 0  # Keep track of the population to calculate averages
+        # Initialize all metrics here
+        self.reset_all()
+
+        # CSV logging flag
+        self.csv_logging_enabled = False
+
+    def reset_all(self):
+        # This method initializes all metrics including cumulative ones
+        self.population_count = 0
         self.cumulative_deaths = 0
         self.deaths_from_aging = 0
         self.death_from_competition = 0
         self.deaths_from_starvation = 0
         self.deaths_from_exposure = 0
+        
+        self.reset_averages()
 
-        self.total_age = 0  # Use this to calculate average_age
-        self.total_lifespan = 0  # Use this for average_lifespan
+    def reset_averages(self):
+        # This method resets only the non-cumulative metrics
+        self.total_age = 0
+        self.total_lifespan = 0
         self.total_strength = 0
         self.total_hardiness = 0
         self.total_metabolism = 0
@@ -293,8 +313,15 @@ class SimulationMetrics:
         self.average_metabolism = 0
         self.average_reproduction_threshold = 0
 
-        # CSV logging fields
-        self.csv_logging_enabled = False
+    def calculate_averages(self):
+        # Ensure division by zero is handled
+        population = max(self.population_count, 1)
+        self.average_age = self.total_age / population
+        self.average_lifespan = self.total_lifespan / population
+        self.average_strength = self.total_strength / population
+        self.average_hardiness = self.total_hardiness / population
+        self.average_metabolism = self.total_metabolism / population
+        self.average_reproduction_threshold = self.total_reproduction_threshold / population
 
     def enable_csv_logging(self, filepath):
         self.csv_logging_enabled = True
@@ -344,15 +371,18 @@ class SimulationMetrics:
         if self.csv_logging_enabled:
             self.csv_file.close()
 
-    def update_agent_metrics(self, agent):
-        # Call this for each agent to accumulate stats
-        self.total_age += agent.age
-        self.total_lifespan += agent.lifespan
-        self.total_strength += agent.strength
-        self.total_hardiness += agent.hardiness
-        self.total_metabolism += agent.metabolism
-        self.total_reproduction_threshold += agent.reproduction_threshold
-        self.population_count += 1
+    def update_agent_metrics(self, agent_matrix):
+        # Loop through each agent in the matrix
+        for row in agent_matrix:
+            for agent in row:
+                if agent.alive:  # Only consider agents that are alive
+                    self.total_age += agent.age
+                    self.total_lifespan += agent.lifespan
+                    self.total_strength += agent.strength
+                    self.total_hardiness += agent.hardiness
+                    self.total_metabolism += agent.metabolism
+                    self.total_reproduction_threshold += agent.reproduction_threshold
+                    self.population_count += 1
 
     def calculate_averages(self):
         # Ensure division by zero is handled
@@ -364,7 +394,7 @@ class SimulationMetrics:
         self.average_metabolism = self.total_metabolism / population
         self.average_reproduction_threshold = self.total_reproduction_threshold / population
 
-    def reset_for_next_step(self):
+    def reset(self):
         # Reset total stats (but not cumulative ones) for the next calculation step
         self.total_age = 0
         self.total_lifespan = 0
@@ -390,7 +420,6 @@ class SimulationMetrics:
 
 
 # Simulation Logic
-
 def isCoordinateInRange(n, x, y):
     if x < 0 or x >= n:
         return False
@@ -407,9 +436,6 @@ def simulateAgentTimeStep(current_step, i, j, environment, agent_matrix, metrics
     current_agent = agent_matrix[i][j]
     if not current_agent.alive:
         return
-
-    # Update agent metrics
-    metrics.update_agent_metrics(current_agent)
 
     # Age Logic
     if config["enable_aging"]:
@@ -431,10 +457,10 @@ def simulateAgentTimeStep(current_step, i, j, environment, agent_matrix, metrics
             metrics.cumulative_deaths += 1
             return
         
-        food_eaten = environment.calculate_food_available(i, j, current_step) #Eat all available food
-        current_agent.consume_food(food_eaten)
+        food_available = environment.calculate_food_available(i, j, current_step)
+        current_agent.consume_food(food_available)
         current_agent.metabolize(current_agent.metabolism)
-        environment.update_food_matrix(i, j, current_step, food_eaten)
+        environment.update_food_matrix(i, j, current_step, food_available)
 
         # Then, check if the agent survives this turn
         if current_agent.energy_reserves <= 0:
@@ -451,7 +477,7 @@ def simulateAgentTimeStep(current_step, i, j, environment, agent_matrix, metrics
 
             # At this point, agent has survived current turn and reproduces if it has enough food to meet threshold.
             # Note reproducing takes energy and may kill the parent agent at the beginning of next turn.
-            current_agent.metabolize(current_agent.reproduction_threshold)
+            current_agent.metabolize(current_agent.reproduction_threshold) # Deduct reproduction cost
             new_individual = Agent.reproduce_asexually(current_agent)
             diceroll = random.randint(1, 9)
             movement_offsets = {
@@ -467,7 +493,6 @@ def simulateAgentTimeStep(current_step, i, j, environment, agent_matrix, metrics
             }
             di, dj = movement_offsets.get(diceroll, (0, 0))
             new_i, new_j = i + di, j + dj
-
             
             # Check if movement is within the map
             if isCoordinateInRange(environment.map_size, new_i, new_j):
@@ -475,11 +500,13 @@ def simulateAgentTimeStep(current_step, i, j, environment, agent_matrix, metrics
                 if (
                     new_individual.hardiness
                     > environment.level_difficulty[environment.world_matrix[new_i][new_j]]
-                ):
-                    if agent_matrix[new_i][new_j].alive:
+                ):  
+                    #Check if cell is already occupied and competition is allowed
+                    if agent_matrix[new_i][new_j].alive and config["enable_violence"]:
+                        #Aggression here
                         metrics.death_from_competition += 1
                         metrics.cumulative_deaths += 1
-                        # One or the other agent in comeptition dies, so its safe to increment here.
+                        # One or the other agent in competition always dies regardless of who wins, so its safe to increment here.
                         if new_individual.strength > agent_matrix[new_i][new_j].strength:
                             agent_matrix[new_i][new_j] = new_individual
                             return
@@ -523,7 +550,7 @@ def simulateAgentTimeStep(current_step, i, j, environment, agent_matrix, metrics
                 new_individual.hardiness
                 > environment.level_difficulty[environment.world_matrix[new_i][new_j]]
             ):
-                if agent_matrix[new_i][new_j].alive:
+                if agent_matrix[new_i][new_j].alive and config["enable_violence"]:
                     # One or the other agent in comeptition dies, so its safe to increment here.
                     metrics.death_from_competition += 1
                     metrics.cumulative_deaths += 1
@@ -551,6 +578,19 @@ def save_matrix_image(matrix, file_name):
     cbar = plt.colorbar(im, ax=ax)
     plt.savefig(str(file_name))
 
+# Function to overlay data on a background
+def overlay_on_background(background_img, data_matrix, cmap='viridis'):
+    # Generate an image from the data matrix
+    fig, ax = plt.subplots(figsize=(background_img.size[0]/100, background_img.size[1]/100), dpi=100)
+    ax.imshow(background_img, extent=(0, data_matrix.shape[1], data_matrix.shape[0], 0))
+    im = ax.imshow(data_matrix, cmap=cmap, alpha=0.5, extent=(0, data_matrix.shape[1], data_matrix.shape[0], 0))  # semi-transparent
+    ax.axis('off')  # Turn off axis labels and ticks
+    fig.canvas.draw()
+
+    # Convert the Matplotlib figure to a PIL Image and return it
+    data_img = Image.frombytes('RGB', fig.canvas.get_width_height(), fig.canvas.tostring_rgb())
+    plt.close(fig)  # Close the figure to free up memory
+    return data_img
 
 def save_agent_matrix_image(matrix, file_name, attribute):
     # Check if the attribute is valid for the objects in the matrix
@@ -696,29 +736,12 @@ def run_game():
     frame_save_interval = config["frame_save_interval"]
     frame_rate = config["frame_rate"]
 
-    # Print initial state and game parameters
-    print("Game Parameters:")
-    print("Map size =", config["map_size"])
-    print("Perlin Noise:", config["use_perlin_noise"])
-    print("Random Params:", config["use_random_perlin_params"])
-    print("Rivers:", config["use_rivers"])
-    print("Food Simulation:", config["enable_food"])
-    print("Aging Simulation:", config["enable_aging"])
-    print("Simulation Steps:", config["simulation_steps"])
-    print()
-
-    # Save the config of the experimental run
-    #config_file_path = os.path.join(results_dir, "config.json")
-    #with open(config_file_path, "w") as f:
-     #   json.dump(config, f, indent=4)
-
     # Save the config of the experimental run as a text file
     config_file_path = os.path.join(results_dir, "config.txt")
     with open(config_file_path, "w") as f:
-        # Write the configuration in a pretty-printed JSON-like format for readability
         for key, value in config.items():
             f.write(f'{key}: {value}\n')
-            if isinstance(value, dict):  # Handle nested dictionaries
+            if isinstance(value, dict):
                 for sub_key, sub_value in value.items():
                     f.write(f'  {sub_key}: {sub_value}\n')
 
@@ -738,7 +761,7 @@ def run_game():
     # Create initial agent
     agent_matrix[agent_starting_pos[0]][
         agent_starting_pos[1]
-    ] = Agent.create_live_agent()
+    ] = Agent.create_initial_agent()
 
     # Declare data frames for gif generation
     strength_frames = []
@@ -821,11 +844,12 @@ def run_game():
                     )
 
         # Calculate and Collect Metrics
+        metrics.update_agent_metrics(agent_matrix)
         metrics.calculate_averages()
         metrics.log_metrics(current_sim_step)
         metrics.print_current_state()
         print()
-        metrics.reset_for_next_step()
+        metrics.reset_averages()
 
         current_sim_step += 1
         print(f"\rSimulation Step {current_sim_step}/{simulation_steps}", end="")
