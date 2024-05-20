@@ -4,12 +4,12 @@
 - **simulation_steps**: Number of steps the simulation runs.
 
 - **terrain**:
-  - **map_type**: Determines the type of terrain to generate. Map choices:
+  - **map_type**: Determines the type of terrain to generate. Map choices (Input into config as strings):
     - **"perlin"**: Generates terrain using Perlin noise for realistic features.
-    - **"petri_dish"**: Generates a gradient-style terrain resembling a petri dish.
+    - **"petri_dish"**: Generates a gradient-style terrain resembling the petri dish experiment from LTEE.
     - **"random"**: Generates a random terrain.
   - **use_random_perlin_params**: Randomize the parameters of the Perlin noise. Only active if using Perlin Noise. 
-  - **use_rivers**: Include rivers in the terrain.
+  - **use_rivers**: Include rivers in the terrain, only active if using Perlin Noise.
 
 - **agent_features**:
   - **use_energy_budget**: Enables balancing of genetic trait expression with an energy budget based on metabolism. Used to encourage specialization.

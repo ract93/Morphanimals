@@ -1,6 +1,6 @@
 {
-    "map_size": 500,
-    "simulation_steps": 100,
+    "map_size": 100,
+    "simulation_steps": 1000,
     "map_type": "petri_dish",
     "use_random_perlin_params": false, 
     "use_rivers": true,
@@ -8,11 +8,11 @@
     "enable_violence": false,
     "enable_food": false,
     "enable_aging": true,
-    "enable_reproduction_threshold": true,
+    "enable_reproduction_threshold": false,
     "food_generation_rate": 2,
     "initial_food": 50,
     "max_food_capacity": 50,
-    "mutation_rate": 0.0034,
+    "mutation_rate": 0.00034,
     "frame_save_interval": 3,
     "frame_rate": 30
 }
