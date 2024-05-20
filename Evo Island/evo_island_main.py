@@ -714,7 +714,6 @@ plt.show()"""
 
 # main game loop
 def run_game():
-
     # Generate a timestamped folder name
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     results_dir = os.path.join("Experimental_Results", timestamp)
@@ -745,11 +744,10 @@ def run_game():
                 for sub_key, sub_value in value.items():
                     f.write(f'  {sub_key}: {sub_value}\n')
 
-
     # Initialize the environment
     environment = Environment(config)
 
-    #Save enviroment
+    # Save environment
     save_matrix_image(environment.world_matrix, os.path.join(results_dir, "Game_World"))
 
     # Initialize the agent matrix
@@ -759,9 +757,16 @@ def run_game():
     agent_starting_pos = environment.find_easiest_starting_location()
 
     # Create initial agent
-    agent_matrix[agent_starting_pos[0]][
-        agent_starting_pos[1]
-    ] = Agent.create_initial_agent()
+    agent_matrix[agent_starting_pos[0]][agent_starting_pos[1]] = Agent.create_initial_agent()
+
+    # Create directories for GIFs and images
+    gifs_dir = os.path.join(results_dir, "Gifs")
+    images_dir = os.path.join(results_dir, "Images")
+    os.makedirs(gifs_dir, exist_ok=True)
+    os.makedirs(images_dir, exist_ok=True)
+
+    # Calculate intervals for capturing images
+    capture_intervals = [simulation_steps // 4, simulation_steps // 2, 3 * simulation_steps // 4, simulation_steps]
 
     # Declare data frames for gif generation
     strength_frames = []
@@ -774,57 +779,37 @@ def run_game():
 
     # Declare plots for visualization
     fig1, ax1 = plt.subplots()
-    im1 = ax1.imshow(
-        transform_matrix(agent_matrix, "strength"), cmap="viridis", vmin=0, vmax=100
-    )
+    im1 = ax1.imshow(transform_matrix(agent_matrix, "strength"), cmap="viridis", vmin=0, vmax=100)
     ax1.set_title("Agent Strength")
     plt.colorbar(im1, ax=ax1)
 
-
     fig2, ax2 = plt.subplots()
-    im2 = ax2.imshow(
-        transform_matrix(agent_matrix, "hardiness"), cmap="inferno", vmin=0, vmax=100
-    )
+    im2 = ax2.imshow(transform_matrix(agent_matrix, "hardiness"), cmap="inferno", vmin=0, vmax=100)
     ax2.set_title("Agent Hardiness")
     plt.colorbar(im2, ax=ax2)
 
-
     fig3, ax3 = plt.subplots()
-    im3 = ax3.imshow(
-        transform_matrix(agent_matrix, "age"), cmap="plasma", vmin=0, vmax=100
-    )
+    im3 = ax3.imshow(transform_matrix(agent_matrix, "age"), cmap="plasma", vmin=0, vmax=100)
     ax3.set_title("Agent Age")
     plt.colorbar(im3, ax=ax3)
 
-
     fig4, ax4 = plt.subplots()
-    im4 = ax4.imshow(
-        transform_matrix(agent_matrix, "lifespan"), cmap="viridis", vmin=0, vmax=100
-    )
+    im4 = ax4.imshow(transform_matrix(agent_matrix, "lifespan"), cmap="viridis", vmin=0, vmax=100)
     ax4.set_title("Agent Max Lifespan")
-    plt.colorbar(im3, ax=ax4)
-
+    plt.colorbar(im4, ax=ax4)
 
     fig5, ax5 = plt.subplots()
-    im5 = ax5.imshow(
-        transform_matrix(agent_matrix, "metabolism"), cmap="inferno", vmin=0, vmax=100
-    )
+    im5 = ax5.imshow(transform_matrix(agent_matrix, "metabolism"), cmap="inferno", vmin=0, vmax=100)
     ax5.set_title("Agent Metabolism")
     plt.colorbar(im5, ax=ax5)
 
-
     fig6, ax6 = plt.subplots()
-    im6 = ax6.imshow(
-        transform_matrix(agent_matrix, "Reproduction Theshold"), cmap="plasma", vmin=0, vmax=100
-    )
-    ax6.set_title("Agent Reproduction Theshold")
+    im6 = ax6.imshow(transform_matrix(agent_matrix, "reproduction_threshold"), cmap="plasma", vmin=0, vmax=100)
+    ax6.set_title("Agent Reproduction Threshold")
     plt.colorbar(im6, ax=ax6)
 
-
     fig7, ax7 = plt.subplots()
-    im7 = ax7.imshow(
-        transform_matrix(agent_matrix, "genetic_distance"), cmap="viridis", vmin=0, vmax=200,
-    )
+    im7 = ax7.imshow(transform_matrix(agent_matrix, "genetic_distance"), cmap="viridis", vmin=0, vmax=200)
     ax7.set_title("Genetic Distance From Ancestor")
     plt.colorbar(im7, ax=ax7)
 
@@ -839,9 +824,7 @@ def run_game():
             for j in range(len(agent_matrix[0])):
                 if agent_matrix[i][j].alive:
                     living_agents_count += 1
-                    simulateAgentTimeStep(
-                        current_sim_step, i, j, environment, agent_matrix, metrics
-                    )
+                    simulateAgentTimeStep(current_sim_step, i, j, environment, agent_matrix, metrics)
 
         # Calculate and Collect Metrics
         metrics.update_agent_metrics(agent_matrix)
@@ -888,6 +871,16 @@ def run_game():
             reproduction_threshold_frames.append(get_image_from_fig(fig6))
             genetic_distance_frames.append(get_image_from_fig(fig7))
 
+        # Capture images at specified intervals
+        if current_sim_step in capture_intervals:
+            fig1.savefig(os.path.join(images_dir, f"strength_step_{current_sim_step}.png"))
+            fig2.savefig(os.path.join(images_dir, f"hardiness_step_{current_sim_step}.png"))
+            fig3.savefig(os.path.join(images_dir, f"age_step_{current_sim_step}.png"))
+            fig4.savefig(os.path.join(images_dir, f"lifespan_step_{current_sim_step}.png"))
+            fig5.savefig(os.path.join(images_dir, f"metabolism_step_{current_sim_step}.png"))
+            fig6.savefig(os.path.join(images_dir, f"reproduction_threshold_step_{current_sim_step}.png"))
+            fig7.savefig(os.path.join(images_dir, f"genetic_distance_step_{current_sim_step}.png"))
+
     plt.close(fig1)
     plt.close(fig2)
     plt.close(fig3)
@@ -896,31 +889,16 @@ def run_game():
     plt.close(fig6)
     plt.close(fig7)
 
-    gifs_dir = os.path.join(results_dir, "Gifs")
-    os.makedirs(gifs_dir, exist_ok=True)
-
-    # Save final state
+    # Save GIFs
     print()
-    print("Generating gifs...")
-    imageio.mimsave(
-        os.path.join(gifs_dir, "strength_map.gif"), strength_frames, fps=frame_rate
-    )
-    imageio.mimsave(
-        os.path.join(gifs_dir, "hardiness_map.gif"), hardiness_frames, fps=frame_rate
-    )
+    print("Generating GIFs...")
+    imageio.mimsave(os.path.join(gifs_dir, "strength_map.gif"), strength_frames, fps=frame_rate)
+    imageio.mimsave(os.path.join(gifs_dir, "hardiness_map.gif"), hardiness_frames, fps=frame_rate)
     imageio.mimsave(os.path.join(gifs_dir, "age_map.gif"), age_frames, fps=frame_rate)
-    imageio.mimsave(
-        os.path.join(gifs_dir, "lifespan_map.gif"), lifespan_frames, fps=frame_rate
-    )
-    imageio.mimsave(
-        os.path.join(gifs_dir, "metabolism_map.gif"), metabolism_frames, fps=frame_rate
-    )
-    imageio.mimsave(
-        os.path.join(gifs_dir, "reproduction_threshold_map.gif"), reproduction_threshold_frames, fps=frame_rate
-    )
-    imageio.mimsave(
-        os.path.join(gifs_dir, "genetic_drift_map.gif"), genetic_distance_frames, fps=frame_rate,
-    )
+    imageio.mimsave(os.path.join(gifs_dir, "lifespan_map.gif"), lifespan_frames, fps=frame_rate)
+    imageio.mimsave(os.path.join(gifs_dir, "metabolism_map.gif"), metabolism_frames, fps=frame_rate)
+    imageio.mimsave(os.path.join(gifs_dir, "reproduction_threshold_map.gif"), reproduction_threshold_frames, fps=frame_rate)
+    imageio.mimsave(os.path.join(gifs_dir, "genetic_drift_map.gif"), genetic_distance_frames, fps=frame_rate)
 
     # Close metrics file
     metrics.close_csv_logging()
@@ -932,11 +910,9 @@ def run_game():
 
     print("Simulation complete.\n")
 
-
 # main
 def main():
     run_game()
-
 
 if __name__ == "__main__":
     main()
