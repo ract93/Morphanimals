@@ -25,12 +25,19 @@ class Environment:
     def __init__(self, config):
         self.config = config
         self.map_size = config["map_size"]
-        self.world_matrix = self.generate_island(
-            use_perlin_noise=config["use_perlin_noise"],
-            use_random_perlin_params=config["use_random_perlin_params"],
-            use_rivers=config["use_rivers"],
-        )
+        self.map_type = config.get("map_type", "perlin")
+        self.world_matrix = self.generate_map()
         self.food_matrix = self.initialize_food_matrix()
+
+    def generate_map(self):
+        if self.map_type == "perlin":
+            return self.generate_island(self.map_size)
+        elif self.map_type == "petri_dish":
+            return self.generate_petri_dish(self.map_size)
+        elif self.map_type == "random":
+            return self.generate_random_map(self.map_size)
+        else:
+            raise ValueError(f"Unknown map type: {self.map_type}")
 
     @staticmethod
     def generate_petri_dish(n):
@@ -46,59 +53,52 @@ class Environment:
 
         return array
 
-    def generate_terrain(self, use_perlin_noise=True, randomize_params=True):
-        if use_perlin_noise:
-            if randomize_params:
-                scale = random.uniform(50, 200)
-                octaves = random.randint(4, 8)
-                persistence = random.uniform(0.4, 0.7)
-                lacunarity = random.uniform(1.8, 2.2)
-            else:
-                scale = 100.0
-                octaves = 6
-                persistence = 0.5
-                lacunarity = 2.0
-
-            world = np.zeros((self.map_size, self.map_size))
-            for i in range(self.map_size):
-                for j in range(self.map_size):
-                    world[i][j] = pnoise2(
-                        i / scale,
-                        j / scale,
-                        octaves=octaves,
-                        persistence=persistence,
-                        lacunarity=lacunarity,
-                        repeatx=self.map_size,
-                        repeaty=self.map_size,
-                        base=0,
-                    )
-
-            world = (world - np.min(world)) * (5 - 1) / (
-                np.max(world) - np.min(world)
-            ) + 1
-            world = np.round(world)
-            return world.astype(int)
-
-        # Petri dish here
-
+    def generate_perlin_noise_terrain(self, n):
+        if self.config["use_random_perlin_params"]:
+            scale = random.uniform(50, 200)
+            octaves = random.randint(4, 8)
+            persistence = random.uniform(0.4, 0.7)
+            lacunarity = random.uniform(1.8, 2.2)
         else:
-            return [
-                [random.randint(1, 3) for _ in range(self.map_size)]
-                for _ in range(self.map_size)
-            ]
+            scale = 100.0
+            octaves = 6
+            persistence = 0.5
+            lacunarity = 2.0
 
-    def generate_island(
-        self, use_perlin_noise=True, use_random_perlin_params=True, use_rivers=True
-    ):
-        world = self.generate_terrain(use_perlin_noise, use_random_perlin_params)
-        if use_rivers:
-            world = self.generate_river(world)  # Passing world matrix as argument
+        world = np.zeros((n, n))
+        for i in range(n):
+            for j in range(n):
+                world[i][j] = pnoise2(
+                    i / scale,
+                    j / scale,
+                    octaves=octaves,
+                    persistence=persistence,
+                    lacunarity=lacunarity,
+                    repeatx=n,
+                    repeaty=n,
+                    base=0,
+                )
+
+        world = (world - np.min(world)) * (5 - 1) / (np.max(world) - np.min(world)) + 1
+        world = np.round(world).astype(int)
+
         return world
+
+    def generate_island(self, n):
+        world = self.generate_perlin_noise_terrain(n)
+        if self.config.get("use_rivers", False):
+            world = self.generate_river(world)
+        return world
+
+    def generate_random_map(self, n):
+        return [
+            [random.randint(1, 3) for _ in range(n)]
+            for _ in range(n)
+        ]
 
     def generate_river(self, world_matrix):
         n = self.map_size
 
-        # Generate 2D Perlin noise
         scale = 200.0
         octaves = 6
         persistence = 0.4
@@ -117,25 +117,55 @@ class Environment:
                     base=0,
                 )
 
-        # Find the maximum and minimum values in the grid
         max_val = np.max(grid)
         min_val = np.min(grid)
-
-        # Rescale the values in the grid to be between 0 and 1
         scaled_grid = (grid - min_val) / (max_val - min_val)
 
-        # Define the river path as a series of points with y-values along the center of the grid
         river_width = n // 50
         river_path = [(i, scaled_grid[i, n // 2]) for i in range(n)]
 
-        # Write the river pattern directly to the world array
         for i in range(n):
             for j in range(n):
                 if abs(int(river_path[i][1] * n) - j) <= river_width // 2:
                     world_matrix[i][j] = 1
 
-        # Return the updated world array
         return world_matrix
+
+    def initialize_food_matrix(self):
+        initial_food_amount = self.config["initial_food"]
+        food_matrix = [
+            [(initial_food_amount, -1) for _ in range(self.map_size)]
+            for _ in range(self.map_size)
+        ]
+        return food_matrix
+
+    def calculate_food_available(self, i, j, current_step):
+        food_generation_rate = self.config["food_generation_rate"]
+        max_food_capacity = self.config["max_food_capacity"]
+
+        previous_food_amount, last_accessed = self.food_matrix[i][j]
+        if last_accessed == -1:
+            food_produced = current_step * food_generation_rate
+        else:
+            food_produced = (current_step - last_accessed) * food_generation_rate
+
+        new_food_amount = min(previous_food_amount + food_produced, max_food_capacity)
+
+        self.food_matrix[i][j] = (new_food_amount, current_step)
+        return new_food_amount
+
+    def update_food_matrix(self, i, j, current_step, food_consumed):
+        previous_food_amount, _last_accessed = self.food_matrix[i][j]
+        new_food_amount = max(previous_food_amount - food_consumed, 0)
+        self.food_matrix[i][j] = (new_food_amount, current_step)
+
+    def find_easiest_starting_location(self):
+        for i, row in enumerate(self.world_matrix):
+            for j, difficulty in enumerate(row):
+                if difficulty == 1:
+                    return (i, j)
+        return None
+
 
     def initialize_food_matrix(self):
         initial_food_amount = self.config["initial_food"]
@@ -169,8 +199,9 @@ class Environment:
         for i, row in enumerate(self.world_matrix):
             for j, difficulty in enumerate(row):
                 if difficulty == 1:
-                    return (i, j)  # Return the coordinates as a tuple (row, column)
-        return None  # Return None if no cell with that difficulty is found
+                    return (i, j)
+        return None
+
 
 
 # Agent Class
@@ -712,30 +743,23 @@ plt.show()"""
     print("Notebook creation process complete.")
 
 
-# main game loop
 def run_game():
-    # Generate a timestamped folder name
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     results_dir = os.path.join("Experimental_Results", timestamp)
 
-    # Ensure the base directory exists
     if not os.path.exists("Experimental_Results"):
         os.makedirs("Experimental_Results")
 
-    # Create the timestamped directory for this run
     os.makedirs(results_dir)
 
-    # Create logger for metrics tracking
     metrics = SimulationMetrics()
     csv_file_path = os.path.join(results_dir, "simulation_metrics.csv")
     metrics.enable_csv_logging(csv_file_path)
 
-    # Use the map configurations
     simulation_steps = config["simulation_steps"]
     frame_save_interval = config["frame_save_interval"]
     frame_rate = config["frame_rate"]
 
-    # Save the config of the experimental run as a text file
     config_file_path = os.path.join(results_dir, "config.txt")
     with open(config_file_path, "w") as f:
         for key, value in config.items():
@@ -744,31 +768,20 @@ def run_game():
                 for sub_key, sub_value in value.items():
                     f.write(f'  {sub_key}: {sub_value}\n')
 
-    # Initialize the environment
     environment = Environment(config)
-
-    # Save environment
     save_matrix_image(environment.world_matrix, os.path.join(results_dir, "Game_World"))
 
-    # Initialize the agent matrix
     agent_matrix = initialize_agent_matrix(environment.map_size)
-
-    # Find starting position for the initial agent
     agent_starting_pos = environment.find_easiest_starting_location()
-
-    # Create initial agent
     agent_matrix[agent_starting_pos[0]][agent_starting_pos[1]] = Agent.create_initial_agent()
 
-    # Create directories for GIFs and images
     gifs_dir = os.path.join(results_dir, "Gifs")
     images_dir = os.path.join(results_dir, "Images")
     os.makedirs(gifs_dir, exist_ok=True)
     os.makedirs(images_dir, exist_ok=True)
 
-    # Calculate intervals for capturing images
     capture_intervals = [simulation_steps // 4, simulation_steps // 2, 3 * simulation_steps // 4, simulation_steps]
 
-    # Declare data frames for gif generation
     strength_frames = []
     hardiness_frames = []
     age_frames = []
@@ -777,7 +790,6 @@ def run_game():
     reproduction_threshold_frames = []
     genetic_distance_frames = []
 
-    # Declare plots for visualization
     fig1, ax1 = plt.subplots()
     im1 = ax1.imshow(transform_matrix(agent_matrix, "strength"), cmap="viridis", vmin=0, vmax=100)
     ax1.set_title("Agent Strength")
@@ -813,7 +825,6 @@ def run_game():
     ax7.set_title("Genetic Distance From Ancestor")
     plt.colorbar(im7, ax=ax7)
 
-    # Main game loop
     print("Running Simulation...\n")
     current_sim_step = 0
 
@@ -826,7 +837,6 @@ def run_game():
                     living_agents_count += 1
                     simulateAgentTimeStep(current_sim_step, i, j, environment, agent_matrix, metrics)
 
-        # Calculate and Collect Metrics
         metrics.update_agent_metrics(agent_matrix)
         metrics.calculate_averages()
         metrics.log_metrics(current_sim_step)
@@ -844,7 +854,6 @@ def run_game():
             break
 
         if current_sim_step % frame_save_interval == 0:
-            # Draw canvas and convert attributes to an image array
             im1.set_data(transform_matrix(agent_matrix, "strength"))
             im2.set_data(transform_matrix(agent_matrix, "hardiness"))
             im3.set_data(transform_matrix(agent_matrix, "age"))
@@ -853,7 +862,6 @@ def run_game():
             im6.set_data(transform_matrix(agent_matrix, "reproduction_threshold"))
             im7.set_data(transform_matrix(agent_matrix, "genetic_distance"))
 
-            # Draw the updated data on the canvas
             fig1.canvas.draw()
             fig2.canvas.draw()
             fig3.canvas.draw()
@@ -862,7 +870,6 @@ def run_game():
             fig6.canvas.draw()
             fig7.canvas.draw()
 
-            # Convert the updated canvas to an image and append to respective frame lists
             strength_frames.append(get_image_from_fig(fig1))
             hardiness_frames.append(get_image_from_fig(fig2))
             age_frames.append(get_image_from_fig(fig3))
@@ -871,7 +878,6 @@ def run_game():
             reproduction_threshold_frames.append(get_image_from_fig(fig6))
             genetic_distance_frames.append(get_image_from_fig(fig7))
 
-        # Capture images at specified intervals
         if current_sim_step in capture_intervals:
             fig1.savefig(os.path.join(images_dir, f"strength_step_{current_sim_step}.png"))
             fig2.savefig(os.path.join(images_dir, f"hardiness_step_{current_sim_step}.png"))
@@ -889,7 +895,6 @@ def run_game():
     plt.close(fig6)
     plt.close(fig7)
 
-    # Save GIFs
     print()
     print("Generating GIFs...")
     imageio.mimsave(os.path.join(gifs_dir, "strength_map.gif"), strength_frames, fps=frame_rate)
@@ -900,17 +905,14 @@ def run_game():
     imageio.mimsave(os.path.join(gifs_dir, "reproduction_threshold_map.gif"), reproduction_threshold_frames, fps=frame_rate)
     imageio.mimsave(os.path.join(gifs_dir, "genetic_drift_map.gif"), genetic_distance_frames, fps=frame_rate)
 
-    # Close metrics file
     metrics.close_csv_logging()
 
-    # Create metrics notebook
     csv_file_path = os.path.join(results_dir, "simulation_metrics.csv")
     notebook_path = os.path.join(results_dir, "analysis_notebook.ipynb")
     create_analysis_notebook(csv_file_path, notebook_path)
 
     print("Simulation complete.\n")
 
-# main
 def main():
     run_game()
 

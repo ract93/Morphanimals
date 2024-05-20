@@ -4,7 +4,10 @@
 - **simulation_steps**: Number of steps the simulation runs.
 
 - **terrain**:
-  - **use_perlin_noise**: Enable realistic terrain g eneration using Perlin noise.
+  - **map_type**: Determines the type of terrain to generate. Map choices:
+    - **"perlin"**: Generates terrain using Perlin noise for realistic features.
+    - **"petri_dish"**: Generates a gradient-style terrain resembling a petri dish.
+    - **"random"**: Generates a random terrain.
   - **use_random_perlin_params**: Randomize the parameters of the Perlin noise. Only active if using Perlin Noise. 
   - **use_rivers**: Include rivers in the terrain.
 
