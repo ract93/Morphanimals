@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import nbformat as nbf
 import noise
 import numpy as np
+import pandas as pd
 from nbconvert.preprocessors import ExecutePreprocessor
 from noise import pnoise2
 from PIL import Image
@@ -23,7 +24,7 @@ with open("config.json", "r") as config_file:
 
 
 class Environment:
-    level_difficulty = {1: 1, 2: 10, 3: 30, 4: 40, 5: 70}
+    level_difficulty = {1: 1, 2: 10, 3: 20, 4: 40, 5: 50}
 
     def __init__(self, config):
         self.config = config
@@ -299,6 +300,7 @@ class Agent:
         self.alive = False
         self.genome = None
         self.reset_traits()
+
 
 class SimulationMetrics:
     def __init__(self):
@@ -809,21 +811,14 @@ for biome, similarity in biome_similarities.items():
     print("Notebook creation process complete.")
 
 
-def run_game():
-    # Generate a timestamped folder name
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    results_dir = os.path.join("Experimental_Results", timestamp)
-
-    # Ensure the base directory exists
-    if not os.path.exists("Experimental_Results"):
-        os.makedirs("Experimental_Results")
-
-    # Create the timestamped directory for this run
-    os.makedirs(results_dir)
+def run_game(trial_num, unique_results_dir):
+    # Create the trial-specific directory within the unique results directory
+    trial_dir = os.path.join(unique_results_dir, f"Trial_{trial_num}")
+    os.makedirs(trial_dir, exist_ok=True)
 
     # Create logger for metrics tracking
     metrics = SimulationMetrics()
-    csv_file_path = os.path.join(results_dir, "simulation_metrics.csv")
+    csv_file_path = os.path.join(trial_dir, "simulation_metrics.csv")
     metrics.enable_csv_logging(csv_file_path)
 
     # Use the map configurations
@@ -832,7 +827,7 @@ def run_game():
     frame_rate = config["frame_rate"]
 
     # Save the config of the experimental run as a text file
-    config_file_path = os.path.join(results_dir, "config.txt")
+    config_file_path = os.path.join(trial_dir, "config.txt")
     with open(config_file_path, "w") as f:
         for key, value in config.items():
             f.write(f"{key}: {value}\n")
@@ -844,7 +839,7 @@ def run_game():
     environment = Environment(config)
 
     # Save environment
-    save_matrix_image(environment.world_matrix, os.path.join(results_dir, "Game_World"))
+    save_matrix_image(environment.world_matrix, os.path.join(trial_dir, "Game_World"))
 
     # Initialize the agent matrix
     agent_matrix = initialize_agent_matrix(environment.map_size)
@@ -853,13 +848,11 @@ def run_game():
     agent_starting_pos = environment.find_easiest_starting_location()
 
     # Create initial agent
-    agent_matrix[agent_starting_pos[0]][
-        agent_starting_pos[1]
-    ] = Agent.create_live_agent()
+    agent_matrix[agent_starting_pos[0]][agent_starting_pos[1]] = Agent.create_live_agent()
 
     # Create directories for GIFs and images
-    gifs_dir = os.path.join(results_dir, "Gifs")
-    images_dir = os.path.join(results_dir, "Images")
+    gifs_dir = os.path.join(trial_dir, "Gifs")
+    images_dir = os.path.join(trial_dir, "Images")
     os.makedirs(gifs_dir, exist_ok=True)
     os.makedirs(images_dir, exist_ok=True)
 
@@ -882,57 +875,37 @@ def run_game():
 
     # Declare plots for visualization
     fig1, ax1 = plt.subplots()
-    im1 = ax1.imshow(
-        transform_matrix(agent_matrix, "strength"), cmap="viridis", vmin=0, vmax=100
-    )
+    im1 = ax1.imshow(transform_matrix(agent_matrix, "strength"), cmap="viridis", vmin=0, vmax=100)
     ax1.set_title("Agent Strength")
     plt.colorbar(im1, ax=ax1)
 
     fig2, ax2 = plt.subplots()
-    im2 = ax2.imshow(
-        transform_matrix(agent_matrix, "hardiness"), cmap="inferno", vmin=0, vmax=100
-    )
+    im2 = ax2.imshow(transform_matrix(agent_matrix, "hardiness"), cmap="inferno", vmin=0, vmax=100)
     ax2.set_title("Agent Hardiness")
     plt.colorbar(im2, ax=ax2)
 
     fig3, ax3 = plt.subplots()
-    im3 = ax3.imshow(
-        transform_matrix(agent_matrix, "age"), cmap="plasma", vmin=0, vmax=100
-    )
+    im3 = ax3.imshow(transform_matrix(agent_matrix, "age"), cmap="plasma", vmin=0, vmax=100)
     ax3.set_title("Agent Age")
     plt.colorbar(im3, ax=ax3)
 
     fig4, ax4 = plt.subplots()
-    im4 = ax4.imshow(
-        transform_matrix(agent_matrix, "lifespan"), cmap="viridis", vmin=0, vmax=100
-    )
+    im4 = ax4.imshow(transform_matrix(agent_matrix, "lifespan"), cmap="viridis", vmin=0, vmax=100)
     ax4.set_title("Agent Max Lifespan")
     plt.colorbar(im4, ax=ax4)
 
     fig5, ax5 = plt.subplots()
-    im5 = ax5.imshow(
-        transform_matrix(agent_matrix, "metabolism"), cmap="inferno", vmin=0, vmax=100
-    )
+    im5 = ax5.imshow(transform_matrix(agent_matrix, "metabolism"), cmap="inferno", vmin=0, vmax=100)
     ax5.set_title("Agent Metabolism")
     plt.colorbar(im5, ax=ax5)
 
     fig6, ax6 = plt.subplots()
-    im6 = ax6.imshow(
-        transform_matrix(agent_matrix, "reproduction_threshold"),
-        cmap="plasma",
-        vmin=0,
-        vmax=100,
-    )
+    im6 = ax6.imshow(transform_matrix(agent_matrix, "reproduction_threshold"), cmap="plasma", vmin=0, vmax=100)
     ax6.set_title("Agent Reproduction Threshold")
     plt.colorbar(im6, ax=ax6)
 
     fig7, ax7 = plt.subplots()
-    im7 = ax7.imshow(
-        transform_matrix(agent_matrix, "genetic_distance"),
-        cmap="viridis",
-        vmin=0,
-        vmax=200,
-    )
+    im7 = ax7.imshow(transform_matrix(agent_matrix, "genetic_distance"), cmap="viridis", vmin=0, vmax=200)
     ax7.set_title("Genetic Distance From Ancestor")
     plt.colorbar(im7, ax=ax7)
 
@@ -998,29 +971,13 @@ def run_game():
 
         # Capture images at specified intervals
         if current_sim_step in capture_intervals:
-            fig1.savefig(
-                os.path.join(images_dir, f"strength_step_{current_sim_step}.png")
-            )
-            fig2.savefig(
-                os.path.join(images_dir, f"hardiness_step_{current_sim_step}.png")
-            )
+            fig1.savefig(os.path.join(images_dir, f"strength_step_{current_sim_step}.png"))
+            fig2.savefig(os.path.join(images_dir, f"hardiness_step_{current_sim_step}.png"))
             fig3.savefig(os.path.join(images_dir, f"age_step_{current_sim_step}.png"))
-            fig4.savefig(
-                os.path.join(images_dir, f"lifespan_step_{current_sim_step}.png")
-            )
-            fig5.savefig(
-                os.path.join(images_dir, f"metabolism_step_{current_sim_step}.png")
-            )
-            fig6.savefig(
-                os.path.join(
-                    images_dir, f"reproduction_threshold_step_{current_sim_step}.png"
-                )
-            )
-            fig7.savefig(
-                os.path.join(
-                    images_dir, f"genetic_distance_step_{current_sim_step}.png"
-                )
-            )
+            fig4.savefig(os.path.join(images_dir, f"lifespan_step_{current_sim_step}.png"))
+            fig5.savefig(os.path.join(images_dir, f"metabolism_step_{current_sim_step}.png"))
+            fig6.savefig(os.path.join(images_dir, f"reproduction_threshold_step_{current_sim_step}.png"))
+            fig7.savefig(os.path.join(images_dir, f"genetic_distance_step_{current_sim_step}.png"))
 
     plt.close(fig1)
     plt.close(fig2)
@@ -1033,53 +990,300 @@ def run_game():
     # Save GIFs
     print()
     print("Generating GIFs...")
-    imageio.mimsave(
-        os.path.join(gifs_dir, "strength_map.gif"), strength_frames, fps=frame_rate
-    )
-    imageio.mimsave(
-        os.path.join(gifs_dir, "hardiness_map.gif"), hardiness_frames, fps=frame_rate
-    )
+    imageio.mimsave(os.path.join(gifs_dir, "strength_map.gif"), strength_frames, fps=frame_rate)
+    imageio.mimsave(os.path.join(gifs_dir, "hardiness_map.gif"), hardiness_frames, fps=frame_rate)
     imageio.mimsave(os.path.join(gifs_dir, "age_map.gif"), age_frames, fps=frame_rate)
-    imageio.mimsave(
-        os.path.join(gifs_dir, "lifespan_map.gif"), lifespan_frames, fps=frame_rate
-    )
-    imageio.mimsave(
-        os.path.join(gifs_dir, "metabolism_map.gif"), metabolism_frames, fps=frame_rate
-    )
-    imageio.mimsave(
-        os.path.join(gifs_dir, "reproduction_threshold_map.gif"),
-        reproduction_threshold_frames,
-        fps=frame_rate,
-    )
-    imageio.mimsave(
-        os.path.join(gifs_dir, "genetic_drift_map.gif"),
-        genetic_distance_frames,
-        fps=frame_rate,
-    )
+    imageio.mimsave(os.path.join(gifs_dir, "lifespan_map.gif"), lifespan_frames, fps=frame_rate)
+    imageio.mimsave(os.path.join(gifs_dir, "metabolism_map.gif"), metabolism_frames, fps=frame_rate)
+    imageio.mimsave(os.path.join(gifs_dir, "reproduction_threshold_map.gif"), reproduction_threshold_frames, fps=frame_rate)
+    imageio.mimsave(os.path.join(gifs_dir, "genetic_drift_map.gif"), genetic_distance_frames, fps=frame_rate)
 
     # Calculate genetic similarities at the final step
     print("Calculating genetic similarity....\n")
-    global_similarity, biome_similarities = metrics.calculate_genetic_similarity(
-        agent_matrix, environment.world_matrix
-    )
+    global_similarity, biome_similarities = metrics.calculate_genetic_similarity(agent_matrix, environment.world_matrix)
     metrics.print_genetic_similarities(global_similarity, biome_similarities)
 
     # Close metrics file
     metrics.close_csv_logging()
 
     # Create metrics notebook
-    csv_file_path = os.path.join(results_dir, "simulation_metrics.csv")
-    notebook_path = os.path.join(results_dir, "analysis_notebook.ipynb")
-    create_analysis_notebook(
-        csv_file_path, notebook_path, global_similarity, biome_similarities
+    csv_file_path = os.path.join(trial_dir, "simulation_metrics.csv")
+    notebook_path = os.path.join(trial_dir, "analysis_notebook.ipynb")
+    create_analysis_notebook(csv_file_path, notebook_path, global_similarity, biome_similarities)
+
+    print(f"Trial {trial_num} complete.\n")
+
+    return global_similarity, biome_similarities
+
+
+def run_experiment():
+    base_results_dir = os.path.join("Experimental_Results")
+    
+    # Prompt the user for the name of the experimental run
+    experiment_name = input("Please enter a name for this experimental run: ")
+    unique_results_dir = os.path.join(base_results_dir, experiment_name)
+    
+    # Ensure the unique results directory exists
+    os.makedirs(unique_results_dir, exist_ok=True)
+
+    experimental_trials = config.get("experimental_trials", 1)
+
+    global_similarities = []
+    biome_similarities_list = []
+
+    for trial in range(1, experimental_trials + 1):
+        print(f"Starting Trial {trial}/{experimental_trials}")
+        global_similarity, biome_similarities = run_game(trial, unique_results_dir)
+        global_similarities.append(global_similarity)
+        biome_similarities_list.append(biome_similarities)
+
+    aggregate_results(unique_results_dir, experimental_trials, global_similarities, biome_similarities_list)
+
+
+def aggregate_results(unique_results_dir, num_trials, global_similarities, biome_similarities_list):
+    # Aggregate CSV files from all trials
+    aggregated_data = []
+    for trial in range(1, num_trials + 1):
+        csv_file_path = os.path.join(unique_results_dir, f"Trial_{trial}", "simulation_metrics.csv")
+        trial_data = pd.read_csv(csv_file_path)
+        trial_data["Trial"] = trial
+        aggregated_data.append(trial_data)
+    
+    aggregated_df = pd.concat(aggregated_data, ignore_index=True)
+
+    # Save the aggregated data to a new CSV file
+    aggregated_csv_path = os.path.join(unique_results_dir, "aggregated_metrics.csv")
+    aggregated_df.to_csv(aggregated_csv_path, index=False)
+
+    # Calculate average global similarity
+    average_global_similarity = sum(global_similarities) / len(global_similarities)
+
+    # Calculate average biome similarities
+    average_biome_similarities = {}
+    for biome_similarities in biome_similarities_list:
+        for biome, similarity in biome_similarities.items():
+            if biome not in average_biome_similarities:
+                average_biome_similarities[biome] = []
+            average_biome_similarities[biome].append(similarity)
+
+    average_biome_similarities = {biome: sum(similarities) / len(similarities) for biome, similarities in average_biome_similarities.items()}
+
+    # Create a summary Jupyter notebook
+    summary_notebook_path = os.path.join(unique_results_dir, "summary_notebook.ipynb")
+    create_summary_notebook(aggregated_csv_path, summary_notebook_path, average_global_similarity, average_biome_similarities, global_similarities, biome_similarities_list)
+
+
+def create_summary_notebook(aggregated_csv_path, notebook_path, average_global_similarity, average_biome_similarities, global_similarities, biome_similarities_list):
+    # Create a new notebook object
+    nb = nbf.v4.new_notebook()
+
+    # Add cells with the necessary code
+    cells = []
+
+    # Cell to import libraries
+    cells.append(
+        nbf.v4.new_code_cell(
+            """\
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+sns.set(style='whitegrid')
+import numpy as np"""
+        )
     )
 
-    print("Simulation complete.\n")
+    # Cell to load data
+    cells.append(
+        nbf.v4.new_code_cell(
+            f"""\
+data = pd.read_csv('{aggregated_csv_path}')"""
+        )
+    )
 
+    # Cell to calculate and display summary statistics
+    cells.append(
+        nbf.v4.new_code_cell(
+            """\
+# Columns of interest
+columns_of_interest = [
+    "Population Count",
+    "Cumulative Deaths",
+    "Deaths from Aging",
+    "Deaths from Competition",
+    "Deaths from Starvation",
+    "Deaths from Exposure",
+    "Average Age",
+    "Average Lifespan",
+    "Average Strength",
+    "Average Hardiness",
+    "Average Metabolism",
+    "Average Reproduction Threshold"
+]
+
+# Calculate and display meaningful statistics
+summary_stats = data[columns_of_interest].describe().loc[["mean", "std", "min", "50%", "max"]]
+summary_stats.rename(index={"50%": "median"}, inplace=True)
+
+# Calculate variance separately
+variance = data[columns_of_interest].var()
+variance_df = pd.DataFrame(variance, columns=['var']).T
+
+# Combine summary_stats with variance
+summary_stats = pd.concat([summary_stats, variance_df])
+
+summary_stats
+"""
+        )
+    )
+
+    # Cell to plot gene value averages over time with error bars
+    cells.append(
+        nbf.v4.new_code_cell(
+            """\
+plt.figure(figsize=(12, 6))
+
+timesteps = data['Timestep'].unique()
+average_lifespan = data.groupby('Timestep')['Average Lifespan'].mean()
+average_strength = data.groupby('Timestep')['Average Strength'].mean()
+average_hardiness = data.groupby('Timestep')['Average Hardiness'].mean()
+average_metabolism = data.groupby('Timestep')['Average Metabolism'].mean()
+average_reproduction_threshold = data.groupby('Timestep')['Average Reproduction Threshold'].mean()
+
+std_lifespan = data.groupby('Timestep')['Average Lifespan'].std()
+std_strength = data.groupby('Timestep')['Average Strength'].std()
+std_hardiness = data.groupby('Timestep')['Average Hardiness'].std()
+std_metabolism = data.groupby('Timestep')['Average Metabolism'].std()
+std_reproduction_threshold = data.groupby('Timestep')['Average Reproduction Threshold'].std()
+
+plt.errorbar(timesteps, average_lifespan, yerr=std_lifespan, label='Average Maximum Lifespan', fmt='-o')
+plt.errorbar(timesteps, average_strength, yerr=std_strength, label='Average Strength', fmt='-o')
+plt.errorbar(timesteps, average_hardiness, yerr=std_hardiness, label='Average Hardiness', fmt='-o')
+plt.errorbar(timesteps, average_metabolism, yerr=std_metabolism, label='Average Metabolism', fmt='-o')
+plt.errorbar(timesteps, average_reproduction_threshold, yerr=std_reproduction_threshold, label='Average Reproduction Threshold', fmt='-o')
+
+plt.xlabel('Timestep')
+plt.ylabel('Value')
+plt.title('Time Series of Average Gene Values Across All Trials with Error Bars')
+plt.legend()
+plt.show()"""
+        )
+    )
+
+    # Cell to plot deaths over time with error bars
+    cells.append(
+        nbf.v4.new_code_cell(
+            """\
+plt.figure(figsize=(12, 6))
+
+deaths_from_aging = data.groupby('Timestep')['Deaths from Aging'].sum()
+deaths_from_competition = data.groupby('Timestep')['Deaths from Competition'].sum()
+deaths_from_starvation = data.groupby('Timestep')['Deaths from Starvation'].sum()
+deaths_from_exposure = data.groupby('Timestep')['Deaths from Exposure'].sum()
+
+std_deaths_from_aging = data.groupby('Timestep')['Deaths from Aging'].std()
+std_deaths_from_competition = data.groupby('Timestep')['Deaths from Competition'].std()
+std_deaths_from_starvation = data.groupby('Timestep')['Deaths from Starvation'].std()
+std_deaths_from_exposure = data.groupby('Timestep')['Deaths from Exposure'].std()
+
+plt.errorbar(timesteps, deaths_from_aging, yerr=std_deaths_from_aging, label='Deaths from Aging', fmt='-o')
+plt.errorbar(timesteps, deaths_from_competition, yerr=std_deaths_from_competition, label='Deaths from Competition', fmt='-o')
+plt.errorbar(timesteps, deaths_from_starvation, yerr=std_deaths_from_starvation, label='Deaths from Starvation', fmt='-o')
+plt.errorbar(timesteps, deaths_from_exposure, yerr=std_deaths_from_exposure, label='Deaths from Exposure', fmt='-o')
+
+plt.xlabel('Timestep')
+plt.ylabel('Total Deaths')
+plt.title('Agent Deaths Over Time Across All Trials with Error Bars')
+plt.legend()
+plt.show()"""
+        )
+    )
+
+    # Cell to display genetic similarities
+    cells.append(
+        nbf.v4.new_code_cell(
+            f"""\
+# Display aggregate genetic similarities
+average_global_similarity = {average_global_similarity}
+average_biome_similarities = {average_biome_similarities}
+
+print(f"Aggregate Global Genetic Similarity: {{average_global_similarity:.4f}}")
+for biome, similarity in average_biome_similarities.items():
+    print(f"Aggregate Genetic Similarity in Biome {{biome}}: {{similarity:.4f}}")
+"""
+        )
+    )
+
+    # Cell to plot histogram of genetic similarities
+    cells.append(
+        nbf.v4.new_code_cell(
+            f"""\
+# Plot histogram of genetic similarities
+global_similarities = {global_similarities}
+biome_similarities_list = {biome_similarities_list}
+
+plt.figure(figsize=(12, 6))
+plt.hist(global_similarities, bins=10, alpha=0.7, label='Global Similarities')
+for biome in set().union(*[d.keys() for d in biome_similarities_list]):
+    biome_values = [d.get(biome, np.nan) for d in biome_similarities_list if biome in d]
+    plt.hist(biome_values, bins=10, alpha=0.7, label=f'Biome {{biome}} Similarities')
+
+plt.xlabel('Genetic Similarity')
+plt.ylabel('Frequency')
+plt.title('Histogram of Genetic Similarities Across All Trials')
+plt.legend()
+plt.show()
+
+# Plot histogram with error bars
+plt.figure(figsize=(12, 6))
+
+global_mean = np.mean(global_similarities)
+global_std = np.std(global_similarities)
+
+plt.errorbar(['Global Similarities'], [global_mean], yerr=[global_std], fmt='o', label='Global Similarities')
+
+for biome in set().union(*[d.keys() for d in biome_similarities_list]):
+    biome_values = [d.get(biome, np.nan) for d in biome_similarities_list if biome in d]
+    if biome_values:
+        biome_mean = np.mean(biome_values)
+        biome_std = np.std(biome_values)
+        plt.errorbar([f'Biome {{biome}} Similarities'], [biome_mean], yerr=[biome_std], fmt='o', label=f'Biome {{biome}} Similarities')
+
+plt.xlabel('Genetic Similarity')
+plt.ylabel('Mean Value with Error Bars')
+plt.title('Mean Genetic Similarities with Error Bars Across All Trials')
+plt.legend()
+plt.show()
+"""
+        )
+    )
+
+    # Add cells to the notebook
+    nb["cells"] = cells
+
+    # Write the notebook to a new file
+    with open(notebook_path, "w") as f:
+        nbf.write(nb, f)
+
+    print(f"Summary notebook created at {notebook_path}")
+
+    # Try to execute the notebook and handle exceptions
+    executed_notebook_path = notebook_path.replace(".ipynb", "_executed.ipynb")
+    try:
+        ep = ExecutePreprocessor(timeout=600, kernel_name="python3")
+        ep.preprocess(nb, {"metadata": {"path": "./"}})
+        with open(executed_notebook_path, "w", encoding="utf-8") as f:
+            nbf.write(nb, f)
+        print("Executed summary notebook saved at", executed_notebook_path)
+        # Delete the original unexecuted notebook if execution is successful
+        os.remove(notebook_path)
+
+    except Exception as e:
+        print("Error during notebook execution:", e)
+
+    print("Summary notebook creation process complete.")
 
 def main():
-    run_game()
-
+    run_experiment()
 
 if __name__ == "__main__":
     main()
