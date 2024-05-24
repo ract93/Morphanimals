@@ -398,12 +398,8 @@ class SimulationMetrics:
 
 
 # Calculates the genetic similarity globally and per biome.
-# Either 10% of the global population and per biome population is sampled, or atleast 30 individuals of each poplation.
-
-
-def calculate_genetic_similarity(
-    agent_matrix, world_matrix, min_sample_size=30, fraction=1.0
-):
+# Either 10% of the global population and per biome population is sampled, or atleast 30 individuals of each population.
+def calculate_genetic_similarity(agent_matrix, world_matrix, min_sample_size=30, fraction=1.0, overhead_factor=0.1):
     def genetic_similarity(agents):
         num_agents = len(agents)
         if num_agents < 2:
@@ -419,15 +415,30 @@ def calculate_genetic_similarity(
         # Convert agents' genomes to CuPy arrays
         genomes = cp.array([agent.genome for agent in agents])
 
-        # Calculate pairwise distances using CuPy
-        dists = cp.linalg.norm(genomes[:, None] - genomes, axis=2)
-        total_distance = cp.sum(dists) / 2  # Since the matrix is symmetric
-        num_comparisons = (num_agents * (num_agents - 1)) / 2
+        # Get total GPU memory and calculate chunk size
+        gpu_mem_info = cp.cuda.runtime.memGetInfo()
+        total_mem = gpu_mem_info[1]
+        free_mem = gpu_mem_info[0]
+        available_mem = free_mem - int(total_mem * overhead_factor)
+        genome_size = genomes.nbytes / num_agents
+        chunk_size = int(available_mem / genome_size)
 
-        average_distance = (
-            total_distance / num_comparisons if num_comparisons > 0 else 0
-        )
-        return 1 / (1 + average_distance)  # Inverse of the average distance
+        # Initialize variables for incremental computation
+        total_distance = 0.0
+        num_comparisons = 0
+
+        # Compute pairwise distances in chunks to fit in GPU memory
+        for start in range(0, num_agents, chunk_size):
+            end = min(start + chunk_size, num_agents)
+            chunk_genomes = genomes[start:end]
+
+            for i in range(len(chunk_genomes)):
+                dists = cp.linalg.norm(chunk_genomes[i] - genomes, axis=1)
+                total_distance += cp.sum(dists)
+                num_comparisons += len(dists)
+
+        average_distance = total_distance / num_comparisons if num_comparisons > 0 else 0
+        return float(1 / (1 + average_distance))  # Inverse of the average distance
 
     # Filter out dead agents
     living_agents = [agent for row in agent_matrix for agent in row if agent.alive]
@@ -449,6 +460,7 @@ def calculate_genetic_similarity(
             biome_similarities[difficulty] = genetic_similarity(agents)
 
     return global_similarity, biome_similarities
+
 
 
 def print_genetic_similarities(global_similarity, biome_similarities):
@@ -647,7 +659,7 @@ def get_image_from_fig(fig):
     return image
 
 
-def create_analysis_notebook(
+def create_trial_notebook(
     csv_file_path, notebook_path, global_similarity, biome_similarities
 ):
     # Create a new notebook object
@@ -1034,7 +1046,7 @@ def run_game(trial_num, unique_results_dir):
     # Create metrics notebook
     csv_file_path = os.path.join(trial_dir, "simulation_metrics.csv")
     notebook_path = os.path.join(trial_dir, "analysis_notebook.ipynb")
-    create_analysis_notebook(
+    create_trial_notebook(
         csv_file_path, notebook_path, global_similarity, biome_similarities
     )
 
@@ -1069,11 +1081,12 @@ def run_experiment():
         experimental_trials,
         global_similarities,
         biome_similarities_list,
+        config
     )
 
 
 def aggregate_results(
-    unique_results_dir, num_trials, global_similarities, biome_similarities_list
+    unique_results_dir, num_trials, global_similarities, biome_similarities_list, config
 ):
     # Aggregate CSV files from all trials
     aggregated_data = []
@@ -1116,24 +1129,26 @@ def aggregate_results(
 
     # Create a summary Jupyter notebook
     summary_notebook_path = os.path.join(unique_results_dir, "summary_notebook.ipynb")
-    create_summary_notebook(
+    create_aggregate_notebook(
         aggregated_csv_path,
         summary_notebook_path,
         average_global_similarity,
         average_biome_similarities,
         global_similarities,
         biome_similarities_list,
+        config  # Pass the config here
     )
 
 
 
-def create_summary_notebook(
+def create_aggregate_notebook(
     aggregated_csv_path,
     notebook_path,
     average_global_similarity,
     average_biome_similarities,
     global_similarities,
     biome_similarities_list,
+    config
 ):
     # Create a new notebook object
     nb = nbf.v4.new_notebook()
@@ -1198,66 +1213,90 @@ summary_stats
     )
 
     # Cell to plot gene value averages over time with error bars
-    cells.append(
-        nbf.v4.new_code_cell(
-            """\
+    gene_value_code = """\
 plt.figure(figsize=(12, 6))
 
 timesteps = data['Timestep'].unique()
+"""
+
+    if config["enable_aging"]:
+        gene_value_code += """\
 average_lifespan = data.groupby('Timestep')['Average Lifespan'].mean()
-average_strength = data.groupby('Timestep')['Average Strength'].mean()
-average_hardiness = data.groupby('Timestep')['Average Hardiness'].mean()
-average_metabolism = data.groupby('Timestep')['Average Metabolism'].mean()
-average_reproduction_threshold = data.groupby('Timestep')['Average Reproduction Threshold'].mean()
-
 std_lifespan = data.groupby('Timestep')['Average Lifespan'].std()
-std_strength = data.groupby('Timestep')['Average Strength'].std()
-std_hardiness = data.groupby('Timestep')['Average Hardiness'].std()
-std_metabolism = data.groupby('Timestep')['Average Metabolism'].std()
-std_reproduction_threshold = data.groupby('Timestep')['Average Reproduction Threshold'].std()
-
 plt.errorbar(timesteps, average_lifespan, yerr=std_lifespan, label='Average Maximum Lifespan', fmt='-o')
-plt.errorbar(timesteps, average_strength, yerr=std_strength, label='Average Strength', fmt='-o')
-plt.errorbar(timesteps, average_hardiness, yerr=std_hardiness, label='Average Hardiness', fmt='-o')
+
+average_age = data.groupby('Timestep')['Average Age'].mean()
+std_age = data.groupby('Timestep')['Average Age'].std()
+plt.errorbar(timesteps, average_age, yerr=std_age, label='Average Age', fmt='-o')
+"""
+    if config["enable_food"]:
+        gene_value_code += """\
+average_metabolism = data.groupby('Timestep')['Average Metabolism'].mean()
+std_metabolism = data.groupby('Timestep')['Average Metabolism'].std()
 plt.errorbar(timesteps, average_metabolism, yerr=std_metabolism, label='Average Metabolism', fmt='-o')
+
+average_reproduction_threshold = data.groupby('Timestep')['Average Reproduction Threshold'].mean()
+std_reproduction_threshold = data.groupby('Timestep')['Average Reproduction Threshold'].std()
 plt.errorbar(timesteps, average_reproduction_threshold, yerr=std_reproduction_threshold, label='Average Reproduction Threshold', fmt='-o')
+"""
+    if config["enable_violence"]:
+        gene_value_code += """\
+average_strength = data.groupby('Timestep')['Average Strength'].mean()
+std_strength = data.groupby('Timestep')['Average Strength'].std()
+plt.errorbar(timesteps, average_strength, yerr=std_strength, label='Average Strength', fmt='-o')
+"""
+
+    gene_value_code += """\
+average_hardiness = data.groupby('Timestep')['Average Hardiness'].mean()
+std_hardiness = data.groupby('Timestep')['Average Hardiness'].std()
+plt.errorbar(timesteps, average_hardiness, yerr=std_hardiness, label='Average Hardiness', fmt='-o')
 
 plt.xlabel('Timestep')
 plt.ylabel('Value')
 plt.title('Time Series of Average Gene Values Across All Trials')
 plt.legend()
-plt.show()"""
-        )
-    )
+plt.show()
+"""
+    cells.append(nbf.v4.new_code_cell(gene_value_code))
 
     # Cell to plot deaths over time with error bars
-    cells.append(
-        nbf.v4.new_code_cell(
-            """\
+    deaths_code = """\
 plt.figure(figsize=(12, 6))
 
+timesteps = data['Timestep'].unique()
+"""
+
+    if config["enable_aging"]:
+        deaths_code += """\
 deaths_from_aging = data.groupby('Timestep')['Deaths from Aging'].sum()
-deaths_from_competition = data.groupby('Timestep')['Deaths from Competition'].sum()
-deaths_from_starvation = data.groupby('Timestep')['Deaths from Starvation'].sum()
-deaths_from_exposure = data.groupby('Timestep')['Deaths from Exposure'].sum()
-
 std_deaths_from_aging = data.groupby('Timestep')['Deaths from Aging'].std()
-std_deaths_from_competition = data.groupby('Timestep')['Deaths from Competition'].std()
-std_deaths_from_starvation = data.groupby('Timestep')['Deaths from Starvation'].std()
-std_deaths_from_exposure = data.groupby('Timestep')['Deaths from Exposure'].std()
-
 plt.errorbar(timesteps, deaths_from_aging, yerr=std_deaths_from_aging, label='Deaths from Aging', fmt='-o')
+"""
+    if config["enable_violence"]:
+        deaths_code += """\
+deaths_from_competition = data.groupby('Timestep')['Deaths from Competition'].sum()
+std_deaths_from_competition = data.groupby('Timestep')['Deaths from Competition'].std()
 plt.errorbar(timesteps, deaths_from_competition, yerr=std_deaths_from_competition, label='Deaths from Competition', fmt='-o')
+"""
+    if config["enable_food"]:
+        deaths_code += """\
+deaths_from_starvation = data.groupby('Timestep')['Deaths from Starvation'].sum()
+std_deaths_from_starvation = data.groupby('Timestep')['Deaths from Starvation'].std()
 plt.errorbar(timesteps, deaths_from_starvation, yerr=std_deaths_from_starvation, label='Deaths from Starvation', fmt='-o')
+"""
+
+    deaths_code += """\
+deaths_from_exposure = data.groupby('Timestep')['Deaths from Exposure'].sum()
+std_deaths_from_exposure = data.groupby('Timestep')['Deaths from Exposure'].std()
 plt.errorbar(timesteps, deaths_from_exposure, yerr=std_deaths_from_exposure, label='Deaths from Exposure', fmt='-o')
 
 plt.xlabel('Timestep')
 plt.ylabel('Total Deaths')
-plt.title('Agent Deaths Over Time Across All Trials with Error Bars')
+plt.title('Agent Deaths Over Time Across All Trials')
 plt.legend()
-plt.show()"""
-        )
-    )
+plt.show()
+"""
+    cells.append(nbf.v4.new_code_cell(deaths_code))
 
     # Cell to display genetic similarities
     cells.append(
@@ -1294,7 +1333,7 @@ plt.title('Histogram of Genetic Similarities Across All Trials')
 plt.legend()
 plt.show()
 
-# Plot histogram with error bars
+# Plot histogram
 plt.figure(figsize=(12, 6))
 
 global_mean = np.mean(global_similarities)
@@ -1342,6 +1381,7 @@ plt.show()
         print("Error during notebook execution:", e)
 
     print("Summary notebook creation process complete.")
+
 
 
 def main():

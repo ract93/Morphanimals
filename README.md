@@ -14,11 +14,12 @@
 - **agent_features**:
   - **use_energy_budget**: Enables balancing of genetic trait expression with an energy budget based on metabolism. Used to encourage specialization.
   - **enable_violence**: Allows agents to contest occupied cells. If off, agents that are born in an already occupied cell will just die to exposure.
+  - **enable_aging**: Agents age and can die of old age.
   - **enable_food**: Controls all food-related features.
     - **food_generation_rate**: Rate at which food regenerates per step. Only active if food is enabled.
     - **initial_food**: Starting amount of food in each cell. Only active if food is enabled.
     - **enable_reproduction_threshold**: Agents need to meet a food threshold to reproduce. Only active if food is enabled.
-  - **enable_aging**: Agents age and can die of old age.
+  
   
 - **genetics**:
   - **mutation_rate**: Probability of mutations during reproduction.
