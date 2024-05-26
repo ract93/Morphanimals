@@ -1,10 +1,10 @@
 {
-    "experimental_trials": 30,
+    "experimental_trials": 3,
     "map_size": 300,
-    "simulation_steps": 1000,
+    "simulation_steps": 100,
     "map_type": "petri_dish",
     "use_random_perlin_params": false, 
-    "use_rivers": true,
+    "use_rivers": false,
     "enable_violence": false,
     "enable_aging": false,
     "enable_food": false,

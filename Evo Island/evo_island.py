@@ -660,7 +660,7 @@ def get_image_from_fig(fig):
 
 
 def create_trial_notebook(
-    csv_file_path, notebook_path, global_similarity, biome_similarities
+    csv_file_path, notebook_path, global_similarity, biome_similarities, config
 ):
     # Create a new notebook object
     nb = nbf.v4.new_notebook()
@@ -687,10 +687,19 @@ data = pd.read_csv('{csv_file_path}')"""
         )
     )
 
+    # Cell to display configuration parameters
+    config_params = json.dumps(config, indent=4)
+    cells.append(
+        nbf.v4.new_markdown_cell(
+            f"## Independent Variables (Configuration Parameters)\n```json\n{config_params}\n```"
+        )
+    )
+
     # Cell to calculate and display summary statistics
     cells.append(
         nbf.v4.new_code_cell(
             """\
+# Dependent Variables (Output Metrics)
 # Columns of interest
 columns_of_interest = [
     "Population Count",
@@ -791,6 +800,7 @@ for biome, similarity in biome_similarities.items():
     print("Notebook creation process complete.")
 
 
+
 def run_game(trial_num, unique_results_dir):
     # Create the trial-specific directory within the unique results directory
     trial_dir = os.path.join(unique_results_dir, f"Trial_{trial_num}")
@@ -828,9 +838,7 @@ def run_game(trial_num, unique_results_dir):
     agent_starting_pos = environment.find_easiest_starting_location()
 
     # Create initial agent
-    agent_matrix[agent_starting_pos[0]][
-        agent_starting_pos[1]
-    ] = Agent.create_live_agent()
+    agent_matrix[agent_starting_pos[0]][agent_starting_pos[1]] = Agent.create_live_agent()
 
     # Create directories for GIFs and images
     gifs_dir = os.path.join(trial_dir, "Gifs")
@@ -1047,12 +1055,13 @@ def run_game(trial_num, unique_results_dir):
     csv_file_path = os.path.join(trial_dir, "simulation_metrics.csv")
     notebook_path = os.path.join(trial_dir, "analysis_notebook.ipynb")
     create_trial_notebook(
-        csv_file_path, notebook_path, global_similarity, biome_similarities
+        csv_file_path, notebook_path, global_similarity, biome_similarities, config
     )
 
     print(f"Trial {trial_num} complete.\n")
 
     return global_similarity, biome_similarities
+
 
 
 def run_experiment():
@@ -1176,10 +1185,19 @@ data = pd.read_csv('{aggregated_csv_path}')"""
         )
     )
 
+    # Cell to display configuration parameters
+    config_params = json.dumps(config, indent=4)
+    cells.append(
+        nbf.v4.new_markdown_cell(
+            f"## Independent Variables (Configuration Parameters)\n```json\n{config_params}\n```"
+        )
+    )
+
     # Cell to calculate and display summary statistics
     cells.append(
         nbf.v4.new_code_cell(
             """\
+# Dependent Variables (Output Metrics)
 # Columns of interest
 columns_of_interest = [
     "Population Count",
@@ -1381,7 +1399,6 @@ plt.show()
         print("Error during notebook execution:", e)
 
     print("Summary notebook creation process complete.")
-
 
 
 def main():
