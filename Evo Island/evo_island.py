@@ -138,15 +138,6 @@ class Environment:
             for _ in range(self.map_size)
         ]
         return food_matrix
-    
-
-    def initialize_food_matrix(self):
-        initial_food_amount = self.config["initial_food"]
-        food_matrix = [
-            [(initial_food_amount, -1) for _ in range(self.map_size)]
-            for _ in range(self.map_size)
-        ]
-        return food_matrix
 
     def calculate_food_available(self, i, j, current_step):
         food_generation_rate = self.config["food_generation_rate"]
@@ -186,6 +177,7 @@ class Agent:
         self.age = 0
         self.energy_reserves = 0
         self.genetic_distance = None
+        self.species = 0
         self.reset_traits()
 
     @classmethod
@@ -225,11 +217,12 @@ class Agent:
         mutated_genome = np.clip(mutated_genome, 0, 100)
         return mutated_genome
 
-    def calculate_genetic_distance(self):
+    def calculate_genetic_distance(self, other_genome=None):
+        if other_genome is None:
+            other_genome = Agent.common_ancestor_genome
         if self.genome is not None:
-            self.genetic_distance = np.linalg.norm(
-                self.genome - Agent.common_ancestor_genome
-            )
+            self.genetic_distance = np.linalg.norm(self.genome - other_genome)
+        return self.genetic_distance
 
     @classmethod
     def reproduce_asexually(cls, parent_agent):
@@ -266,6 +259,7 @@ class Agent:
         self.metabolism = 0
         self.reproduction_threshold = 0
         self.genetic_distance = 0
+        self.species = 0
 
     def kill_agent(self):
         self.alive = False
@@ -275,6 +269,7 @@ class Agent:
 
 class SimulationMetrics:
     def __init__(self):
+        self.species_counts = 0
         self.population_count = 0  # Keep track of the population to calculate averages
         self.cumulative_deaths = 0
         self.deaths_from_aging = 0
@@ -316,6 +311,7 @@ class SimulationMetrics:
             "Average Hardiness",
             "Average Metabolism",
             "Average Reproduction Threshold",
+            "Number of Species",
         ]
         self.csv_file = open(
             self.filepath, "w", newline="", buffering=1
@@ -340,6 +336,7 @@ class SimulationMetrics:
             "Average Hardiness": self.average_hardiness,
             "Average Metabolism": self.average_metabolism,
             "Average Reproduction Threshold": self.average_reproduction_threshold,
+            "Number of Species": self.species_counts,
         }
         self.writer.writerow(row)
 
@@ -349,6 +346,7 @@ class SimulationMetrics:
 
     def update_agent_metrics(self, agent_matrix):
         # Iterate over each agent in the matrix
+        species_set = set()
         for row in agent_matrix:
             for agent in row:
                 if agent.alive:  # Only consider agents that are alive
@@ -359,6 +357,9 @@ class SimulationMetrics:
                     self.total_metabolism += agent.metabolism
                     self.total_reproduction_threshold += agent.reproduction_threshold
                     self.population_count += 1
+                    species_set.add(agent.species)
+
+        self.species_counts = len(species_set)
 
     def calculate_averages(self):
         # Ensure division by zero is handled
@@ -392,8 +393,9 @@ class SimulationMetrics:
             f"Avg Age: {self.average_age:.2f}, Avg Lifespan: {self.average_lifespan:.2f}, "
             f"Avg Strength: {self.average_strength:.2f}, "
             f"Avg Hardiness: {self.average_hardiness:.2f}, "
-            f"Avg Metabolism: {self.average_metabolism:.2f} "
-            f"Avg Reproduction Threshold: {self.average_reproduction_threshold:.2f} "
+            f"Avg Metabolism: {self.average_metabolism:.2f}, "
+            f"Avg Reproduction Threshold: {self.average_reproduction_threshold:.2f}, "
+            f"Number of Species: {self.species_counts}"
         )
 
 
@@ -462,15 +464,46 @@ def calculate_genetic_similarity(agent_matrix, world_matrix, min_sample_size=30,
     return global_similarity, biome_similarities
 
 
-
 def print_genetic_similarities(global_similarity, biome_similarities):
     print(f"Global Genetic Similarity: {global_similarity:.4f}")
     for difficulty, similarity in biome_similarities.items():
         print(f"Genetic Similarity in Biome {difficulty}: {similarity:.4f}")
 
 
+# Speciation Functions
+def classify_species(agent_matrix, threshold=10):
+    species_counter = 1
+    species_representatives = []
+
+    for row in agent_matrix:
+        for agent in row:
+            if agent.alive:
+                assigned = False
+                for rep in species_representatives:
+                    if agent.calculate_genetic_distance(rep.genome) < threshold:
+                        agent.species = rep.species
+                        assigned = True
+                        break
+
+                if not assigned:
+                    agent.species = species_counter
+                    species_representatives.append(agent)
+                    species_counter += 1
+
+
+def collect_species_genomes(agent_matrix):
+    species_genomes = {}
+    for row in agent_matrix:
+        for agent in row:
+            if agent.alive:
+                if agent.species not in species_genomes:
+                    species_genomes[agent.species] = []
+                species_genomes[agent.species].append(agent.genome.tolist())
+    return species_genomes
+
+
 # Simulation Logic
-def isCoordinateInRange(n, x, y):
+def is_coordinate_in_range(n, x, y):
     if x < 0 or x >= n:
         return False
     if y < 0 or y >= n:
@@ -482,7 +515,7 @@ def initialize_agent_matrix(n):
     return [[Agent() for j in range(n)] for i in range(n)]
 
 
-def simulateAgentTimeStep(current_step, i, j, environment, agent_matrix, metrics):
+def simulate_agent_time_step(current_step, i, j, environment, agent_matrix, metrics):
     # Check if current cell has a live agent
     current_agent = agent_matrix[i][j]
     if not current_agent.alive:
@@ -549,7 +582,7 @@ def simulateAgentTimeStep(current_step, i, j, environment, agent_matrix, metrics
             new_i, new_j = i + di, j + dj
 
             # Check if movement is within the map
-            if isCoordinateInRange(environment.map_size, new_i, new_j):
+            if is_coordinate_in_range(environment.map_size, new_i, new_j):
                 # Check if new agent is hardy enough to occupy the cell.
                 if (
                     new_individual.hardiness
@@ -602,7 +635,7 @@ def simulateAgentTimeStep(current_step, i, j, environment, agent_matrix, metrics
         new_i, new_j = i + di, j + dj
 
         # Check if movement is within the map
-        if isCoordinateInRange(environment.map_size, new_i, new_j):
+        if is_coordinate_in_range(environment.map_size, new_i, new_j):
             # Check if agent is hardy enough to occupy the cell.
             if (
                 new_individual.hardiness
@@ -659,11 +692,12 @@ def get_image_from_fig(fig):
     return image
 
 
-def create_trial_notebook(
-    csv_file_path, notebook_path, global_similarity, biome_similarities, config
-):
+def create_trial_notebook(csv_file_path, notebook_path, config):
     # Create a new notebook object
     nb = nbf.v4.new_notebook()
+
+    # Convert the JSON config to a Python dictionary string that can be evaluated in the notebook
+    config_str = json.dumps(config).replace('true', 'True').replace('false', 'False')
 
     # Add cells with the necessary code
     cells = []
@@ -687,11 +721,11 @@ data = pd.read_csv('{csv_file_path}')"""
         )
     )
 
-    # Cell to display configuration parameters
-    config_params = json.dumps(config, indent=4)
+    # Cell to include config
     cells.append(
-        nbf.v4.new_markdown_cell(
-            f"## Independent Variables (Configuration Parameters)\n```json\n{config_params}\n```"
+        nbf.v4.new_code_cell(
+            f"""\
+config = {config_str}"""
         )
     )
 
@@ -699,7 +733,6 @@ data = pd.read_csv('{csv_file_path}')"""
     cells.append(
         nbf.v4.new_code_cell(
             """\
-# Dependent Variables (Output Metrics)
 # Columns of interest
 columns_of_interest = [
     "Population Count",
@@ -713,7 +746,8 @@ columns_of_interest = [
     "Average Strength",
     "Average Hardiness",
     "Average Metabolism",
-    "Average Reproduction Threshold"
+    "Average Reproduction Threshold",
+    "Number of Species"
 ]
 
 # Calculate and display meaningful statistics
@@ -728,11 +762,15 @@ summary_stats"""
         nbf.v4.new_code_cell(
             """\
 plt.figure(figsize=(12, 6))
-plt.plot(data['Timestep'], data['Average Lifespan'], label='Average Maximum Lifespan')
-plt.plot(data['Timestep'], data['Average Strength'], label='Average Strength')
+if config["enable_aging"]:
+    plt.plot(data['Timestep'], data['Average Lifespan'], label='Average Maximum Lifespan')
+    plt.plot(data['Timestep'], data['Average Age'], label='Average Age')
+if config["enable_violence"]:
+    plt.plot(data['Timestep'], data['Average Strength'], label='Average Strength')
+if config["enable_food"]:
+    plt.plot(data['Timestep'], data['Average Metabolism'], label='Average Metabolism')
+    plt.plot(data['Timestep'], data['Average Reproduction Threshold'], label='Average Reproduction Threshold')
 plt.plot(data['Timestep'], data['Average Hardiness'], label='Average Hardiness')
-plt.plot(data['Timestep'], data['Average Metabolism'], label='Average Metabolism')
-plt.plot(data['Timestep'], data['Average Reproduction Threshold'], label='Average Reproduction Threshold')
 plt.xlabel('Timestep')
 plt.ylabel('Value')
 plt.title('Time Series of Average Gene Values')
@@ -746,9 +784,12 @@ plt.show()"""
         nbf.v4.new_code_cell(
             """\
 plt.figure(figsize=(12, 6))
-plt.plot(data['Timestep'], data['Deaths from Aging'], label='Deaths from Aging')
-plt.plot(data['Timestep'], data['Deaths from Competition'], label='Deaths from Competition')
-plt.plot(data['Timestep'], data['Deaths from Starvation'], label='Deaths from Starvation')
+if config["enable_aging"]:
+    plt.plot(data['Timestep'], data['Deaths from Aging'], label='Deaths from Aging')
+if config["enable_violence"]:
+    plt.plot(data['Timestep'], data['Deaths from Competition'], label='Deaths from Competition')
+if config["enable_food"]:
+    plt.plot(data['Timestep'], data['Deaths from Starvation'], label='Deaths from Starvation')
 plt.plot(data['Timestep'], data['Deaths from Exposure'], label='Deaths from Exposure')
 
 plt.xlabel('Timestep')
@@ -759,18 +800,17 @@ plt.show()"""
         )
     )
 
-    # Cell to display genetic similarities
+    # Cell to plot number of species over time
     cells.append(
         nbf.v4.new_code_cell(
-            f"""\
-# Display genetic similarities
-global_similarity = {global_similarity}
-biome_similarities = {biome_similarities}
-
-print(f"Global Genetic Similarity: {{global_similarity:.4f}}")
-for biome, similarity in biome_similarities.items():
-    print(f"Genetic Similarity in Biome {{biome}}: {{similarity:.4f}}")
-"""
+            """\
+plt.figure(figsize=(12, 6))
+plt.plot(data['Timestep'], data['Number of Species'], label='Number of Species')
+plt.xlabel('Timestep')
+plt.ylabel('Number of Species')
+plt.title('Number of Species Over Time')
+plt.legend()
+plt.show()"""
         )
     )
 
@@ -801,6 +841,7 @@ for biome, similarity in biome_similarities.items():
 
 
 
+
 def run_game(trial_num, unique_results_dir):
     # Create the trial-specific directory within the unique results directory
     trial_dir = os.path.join(unique_results_dir, f"Trial_{trial_num}")
@@ -817,13 +858,13 @@ def run_game(trial_num, unique_results_dir):
     frame_rate = config["frame_rate"]
 
     # Save the config of the experimental run as a text file
-    config_file_path = os.path.join(trial_dir, "config.txt")
-    with open(config_file_path, "w") as f:
-        for key, value in config.items():
-            f.write(f"{key}: {value}\n")
-            if isinstance(value, dict):
-                for sub_key, sub_value in value.items():
-                    f.write(f"  {sub_key}: {sub_value}\n")
+    #config_file_path = os.path.join(trial_dir, "config.txt")
+    #with open(config_file_path, "w") as f:
+        #for key, value in config.items():
+           # f.write(f"{key}: {value}\n")
+            #if isinstance(value, dict):
+                #for sub_key, sub_value in value.items():
+                    #f.write(f"  {sub_key}: {sub_value}\n")
 
     # Initialize the environment
     environment = Environment(config)
@@ -838,7 +879,9 @@ def run_game(trial_num, unique_results_dir):
     agent_starting_pos = environment.find_easiest_starting_location()
 
     # Create initial agent
-    agent_matrix[agent_starting_pos[0]][agent_starting_pos[1]] = Agent.create_live_agent()
+    agent_matrix[agent_starting_pos[0]][
+        agent_starting_pos[1]
+    ] = Agent.create_live_agent()
 
     # Create directories for GIFs and images
     gifs_dir = os.path.join(trial_dir, "Gifs")
@@ -862,6 +905,7 @@ def run_game(trial_num, unique_results_dir):
     metabolism_frames = []
     reproduction_threshold_frames = []
     genetic_distance_frames = []
+    species_frames = []
 
     # Declare plots for visualization
     fig1, ax1 = plt.subplots()
@@ -919,6 +963,16 @@ def run_game(trial_num, unique_results_dir):
     ax7.set_title("Genetic Distance From Ancestor")
     plt.colorbar(im7, ax=ax7)
 
+    fig8, ax8 = plt.subplots()
+    im8 = ax8.imshow(
+        transform_matrix(agent_matrix, "Species Distribution"),
+        cmap="tab20",
+        vmin=0,
+        vmax=200,
+    )
+    ax8.set_title("Agent Species")
+    plt.colorbar(im8, ax=ax8)
+
     # Main game loop
     print("Running Simulation...\n")
     current_sim_step = 0
@@ -930,11 +984,14 @@ def run_game(trial_num, unique_results_dir):
             for j in range(len(agent_matrix[0])):
                 if agent_matrix[i][j].alive:
                     living_agents_count += 1
-                    simulateAgentTimeStep(
+                    simulate_agent_time_step(
                         current_sim_step, i, j, environment, agent_matrix, metrics
                     )
 
-        # Calculate and Collect Metrics
+        # Assign species labels to agents
+        classify_species(agent_matrix)
+
+        # Calculate and collect metrics
         metrics.update_agent_metrics(agent_matrix)
         metrics.calculate_averages()
         metrics.log_metrics(current_sim_step)
@@ -960,6 +1017,7 @@ def run_game(trial_num, unique_results_dir):
             im5.set_data(transform_matrix(agent_matrix, "metabolism"))
             im6.set_data(transform_matrix(agent_matrix, "reproduction_threshold"))
             im7.set_data(transform_matrix(agent_matrix, "genetic_distance"))
+            im8.set_data(transform_matrix(agent_matrix, "species"))
 
             # Draw the updated data on the canvas
             fig1.canvas.draw()
@@ -969,6 +1027,7 @@ def run_game(trial_num, unique_results_dir):
             fig5.canvas.draw()
             fig6.canvas.draw()
             fig7.canvas.draw()
+            fig8.canvas.draw()
 
             # Convert the updated canvas to an image and append to respective frame lists
             strength_frames.append(get_image_from_fig(fig1))
@@ -978,6 +1037,7 @@ def run_game(trial_num, unique_results_dir):
             metabolism_frames.append(get_image_from_fig(fig5))
             reproduction_threshold_frames.append(get_image_from_fig(fig6))
             genetic_distance_frames.append(get_image_from_fig(fig7))
+            species_frames.append(get_image_from_fig(fig8))
 
         # Capture images at specified intervals
         if current_sim_step in capture_intervals:
@@ -1004,6 +1064,9 @@ def run_game(trial_num, unique_results_dir):
                     images_dir, f"genetic_distance_step_{current_sim_step}.png"
                 )
             )
+            fig8.savefig(
+                os.path.join(images_dir, f"species_step_{current_sim_step}.png")
+            )
 
     plt.close(fig1)
     plt.close(fig2)
@@ -1012,6 +1075,7 @@ def run_game(trial_num, unique_results_dir):
     plt.close(fig5)
     plt.close(fig6)
     plt.close(fig7)
+    plt.close(fig8)
 
     # Save GIFs
     print()
@@ -1039,14 +1103,22 @@ def run_game(trial_num, unique_results_dir):
         genetic_distance_frames,
         fps=frame_rate,
     )
-
-    # Calculate genetic similarities at the final step
-    print("Calculating genetic similarity....\n")
-    global_similarity, biome_similarities = calculate_genetic_similarity(
-        agent_matrix, environment.world_matrix, min_sample_size=30, fraction=1
+    imageio.mimsave(
+        os.path.join(gifs_dir, "species_map.gif"),
+        species_frames,
+        fps=frame_rate,
     )
 
-    print_genetic_similarities(global_similarity, biome_similarities)
+    # Calculate genetic similarities at the final step
+    #print("Calculating genetic similarity....\n")
+    #global_similarity, biome_similarities = calculate_genetic_similarity(
+    #    agent_matrix, environment.world_matrix, min_sample_size=30, fraction=1
+    #)
+
+    #print_genetic_similarities(global_similarity, biome_similarities)
+
+    # Collect species genomes
+    species_genomes = collect_species_genomes(agent_matrix)
 
     # Close metrics file
     metrics.close_csv_logging()
@@ -1055,13 +1127,12 @@ def run_game(trial_num, unique_results_dir):
     csv_file_path = os.path.join(trial_dir, "simulation_metrics.csv")
     notebook_path = os.path.join(trial_dir, "analysis_notebook.ipynb")
     create_trial_notebook(
-        csv_file_path, notebook_path, global_similarity, biome_similarities, config
+        csv_file_path, notebook_path, config
     )
 
     print(f"Trial {trial_num} complete.\n")
 
-    return global_similarity, biome_similarities
-
+    #return global_similarity, biome_similarities
 
 
 def run_experiment():
@@ -1074,28 +1145,21 @@ def run_experiment():
     # Ensure the unique results directory exists
     os.makedirs(unique_results_dir, exist_ok=True)
 
-    experimental_trials = config.get("experimental_trials", 1)
+    num_experimental_trials = config.get("experimental_trials", 1)
 
-    global_similarities = []
-    biome_similarities_list = []
-
-    for trial in range(1, experimental_trials + 1):
-        print(f"Starting Trial {trial}/{experimental_trials}")
-        global_similarity, biome_similarities = run_game(trial, unique_results_dir)
-        global_similarities.append(global_similarity)
-        biome_similarities_list.append(biome_similarities)
+    for trial in range(1, num_experimental_trials + 1):
+        print(f"Starting Trial {trial}/{num_experimental_trials}")
+        run_game(trial, unique_results_dir)
 
     aggregate_results(
         unique_results_dir,
-        experimental_trials,
-        global_similarities,
-        biome_similarities_list,
+        num_experimental_trials,
         config
     )
 
 
 def aggregate_results(
-    unique_results_dir, num_trials, global_similarities, biome_similarities_list, config
+    unique_results_dir, num_trials, config
 ):
     # Aggregate CSV files from all trials
     aggregated_data = []
@@ -1113,50 +1177,18 @@ def aggregate_results(
     aggregated_csv_path = os.path.join(unique_results_dir, "aggregated_metrics.csv")
     aggregated_df.to_csv(aggregated_csv_path, index=False)
 
-    # Calculate average global similarity
-    average_global_similarity = sum(global_similarities) / len(global_similarities)
-
-    # Calculate average biome similarities
-    average_biome_similarities = {}
-    for biome_similarities in biome_similarities_list:
-        for biome, similarity in biome_similarities.items():
-            if biome not in average_biome_similarities:
-                average_biome_similarities[biome] = []
-            average_biome_similarities[biome].append(similarity)
-
-    average_biome_similarities = {
-        biome: sum(similarities) / len(similarities)
-        for biome, similarities in average_biome_similarities.items()
-    }
-
-    # Convert numpy arrays to floats
-    global_similarities = [float(similarity) for similarity in global_similarities]
-    biome_similarities_list = [
-        {biome: float(similarity) for biome, similarity in biome_similarities.items()}
-        for biome_similarities in biome_similarities_list
-    ]
-
     # Create a summary Jupyter notebook
     summary_notebook_path = os.path.join(unique_results_dir, "summary_notebook.ipynb")
     create_aggregate_notebook(
         aggregated_csv_path,
         summary_notebook_path,
-        average_global_similarity,
-        average_biome_similarities,
-        global_similarities,
-        biome_similarities_list,
         config  # Pass the config here
     )
-
 
 
 def create_aggregate_notebook(
     aggregated_csv_path,
     notebook_path,
-    average_global_similarity,
-    average_biome_similarities,
-    global_similarities,
-    biome_similarities_list,
     config
 ):
     # Create a new notebook object
@@ -1185,19 +1217,10 @@ data = pd.read_csv('{aggregated_csv_path}')"""
         )
     )
 
-    # Cell to display configuration parameters
-    config_params = json.dumps(config, indent=4)
-    cells.append(
-        nbf.v4.new_markdown_cell(
-            f"## Independent Variables (Configuration Parameters)\n```json\n{config_params}\n```"
-        )
-    )
-
     # Cell to calculate and display summary statistics
     cells.append(
         nbf.v4.new_code_cell(
             """\
-# Dependent Variables (Output Metrics)
 # Columns of interest
 columns_of_interest = [
     "Population Count",
@@ -1211,7 +1234,8 @@ columns_of_interest = [
     "Average Strength",
     "Average Hardiness",
     "Average Metabolism",
-    "Average Reproduction Threshold"
+    "Average Reproduction Threshold",
+    "Number of Species"
 ]
 
 # Calculate and display meaningful statistics
@@ -1316,62 +1340,34 @@ plt.show()
 """
     cells.append(nbf.v4.new_code_cell(deaths_code))
 
-    # Cell to display genetic similarities
+    # Cell to plot number of species over time with error bars
     cells.append(
         nbf.v4.new_code_cell(
-            f"""\
-# Display aggregate genetic similarities
-average_global_similarity = {average_global_similarity}
-average_biome_similarities = {average_biome_similarities}
-
-print(f"Aggregate Global Genetic Similarity: {{average_global_similarity:.4f}}")
-for biome, similarity in average_biome_similarities.items():
-    print(f"Aggregate Genetic Similarity in Biome {{biome}}: {{similarity:.4f}}")
-"""
+            """\
+plt.figure(figsize=(12, 6))
+timesteps = data['Timestep'].unique()
+average_species = data.groupby('Timestep')['Number of Species'].mean()
+std_species = data.groupby('Timestep')['Number of Species'].std()
+plt.errorbar(timesteps, average_species, yerr=std_species, label='Average Number of Species', fmt='-o')
+plt.xlabel('Timestep')
+plt.ylabel('Number of Species')
+plt.title('Number of Species Over Time Across All Trials')
+plt.legend()
+plt.show()"""
         )
     )
 
-    # Cell to plot histogram of genetic similarities
+    # Cell to plot histogram of number of species
     cells.append(
         nbf.v4.new_code_cell(
-            f"""\
-# Plot histogram of genetic similarities
-global_similarities = {global_similarities}
-biome_similarities_list = {biome_similarities_list}
-
+            """\
 plt.figure(figsize=(12, 6))
-plt.hist(global_similarities, bins=10, alpha=0.7, label='Global Similarities')
-for biome in set().union(*[d.keys() for d in biome_similarities_list]):
-    biome_values = [d.get(biome) for d in biome_similarities_list if biome in d]
-    plt.hist(biome_values, bins=10, alpha=0.7, label=f'Biome {{biome}} Similarities')
-
-plt.xlabel('Genetic Similarity')
+species_counts = data['Number of Species']
+plt.hist(species_counts, bins=10, alpha=0.7)
+plt.xlabel('Number of Species')
 plt.ylabel('Frequency')
-plt.title('Histogram of Genetic Similarities Across All Trials')
-plt.legend()
-plt.show()
-
-# Plot histogram
-plt.figure(figsize=(12, 6))
-
-global_mean = np.mean(global_similarities)
-global_std = np.std(global_similarities)
-
-plt.errorbar(['Global Similarities'], [global_mean], yerr=[global_std], fmt='o', label='Global Similarities')
-
-for biome in set().union(*[d.keys() for d in biome_similarities_list]):
-    biome_values = [d.get(biome) for d in biome_similarities_list if biome in d]
-    if biome_values:
-        biome_mean = np.mean(biome_values)
-        biome_std = np.std(biome_values)
-        plt.errorbar([f'Biome {{biome}} Similarities'], [biome_mean], yerr=[biome_std], fmt='o', label=f'Biome {{biome}} Similarities')
-
-plt.xlabel('Genetic Similarity')
-plt.ylabel('Mean Value')
-plt.title('Mean Genetic Similarities Across All Trials')
-plt.legend()
-plt.show()
-"""
+plt.title('Histogram of Number of Species Across All Trials')
+plt.show()"""
         )
     )
 
@@ -1399,6 +1395,8 @@ plt.show()
         print("Error during notebook execution:", e)
 
     print("Summary notebook creation process complete.")
+
+
 
 
 def main():

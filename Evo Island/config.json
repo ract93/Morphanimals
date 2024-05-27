@@ -1,5 +1,5 @@
 {
-    "experimental_trials": 3,
+    "experimental_trials": 10,
     "map_size": 300,
     "simulation_steps": 100,
     "map_type": "petri_dish",
