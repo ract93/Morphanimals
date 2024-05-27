@@ -23,6 +23,7 @@
   
 - **genetics**:
   - **mutation_rate**: Probability of mutations during reproduction.
+  - **speciation_threshold**: Threshold of genetic distance between species representatives at which a new species is formed.
 
 - **visualization**:
   - **frame_save_interval**: Steps between saving frames for a GIF.

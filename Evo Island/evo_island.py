@@ -11,9 +11,11 @@ import nbformat as nbf
 import noise
 import numpy as np
 import pandas as pd
+import matplotlib.colors as mcolors
 from nbconvert.preprocessors import ExecutePreprocessor
 from noise import pnoise2
 from PIL import Image
+
 
 # Config
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
@@ -471,7 +473,7 @@ def print_genetic_similarities(global_similarity, biome_similarities):
 
 
 # Speciation Functions
-def classify_species(agent_matrix, threshold=10):
+def classify_species(agent_matrix, threshold=config["speciation_threshold"]):
     species_counter = 1
     species_representatives = []
 
@@ -661,6 +663,22 @@ def simulate_agent_time_step(current_step, i, j, environment, agent_matrix, metr
 def transform_matrix(agent_matrix, attribute):
     return [[getattr(agent, attribute, 0) for agent in row] for row in agent_matrix]
 
+def generate_large_cmap(num_colors):
+    """ Generate a large colormap with num_colors unique colors based on tab20, tab20b, and tab20c """
+    tab20 = plt.get_cmap('tab20').colors
+    tab20b = plt.get_cmap('tab20b').colors
+    tab20c = plt.get_cmap('tab20c').colors
+    
+    combined_colors = list(tab20) + list(tab20b) + list(tab20c)
+    extended_colors = []
+
+    for i in range(num_colors):
+        base_color = combined_colors[i % len(combined_colors)]
+        variation = i // len(combined_colors)
+        varied_color = tuple(min(1, c + (variation * 0.05)) for c in base_color)
+        extended_colors.append(varied_color)
+
+    return mcolors.ListedColormap(extended_colors)
 
 def save_matrix_image(matrix, file_name):
     fig, ax = plt.subplots()
@@ -917,21 +935,21 @@ def run_game(trial_num, unique_results_dir):
 
     fig2, ax2 = plt.subplots()
     im2 = ax2.imshow(
-        transform_matrix(agent_matrix, "hardiness"), cmap="inferno", vmin=0, vmax=100
+        transform_matrix(agent_matrix, "hardiness"), cmap="viridis", vmin=0, vmax=100
     )
     ax2.set_title("Agent Hardiness")
     plt.colorbar(im2, ax=ax2)
 
     fig3, ax3 = plt.subplots()
     im3 = ax3.imshow(
-        transform_matrix(agent_matrix, "age"), cmap="plasma", vmin=0, vmax=100
+        transform_matrix(agent_matrix, "age"), cmap="viridis", vmin=0, vmax=50
     )
     ax3.set_title("Agent Age")
     plt.colorbar(im3, ax=ax3)
 
     fig4, ax4 = plt.subplots()
     im4 = ax4.imshow(
-        transform_matrix(agent_matrix, "lifespan"), cmap="viridis", vmin=0, vmax=100
+        transform_matrix(agent_matrix, "lifespan"), cmap="inferno", vmin=0, vmax=100
     )
     ax4.set_title("Agent Max Lifespan")
     plt.colorbar(im4, ax=ax4)
@@ -946,9 +964,10 @@ def run_game(trial_num, unique_results_dir):
     fig6, ax6 = plt.subplots()
     im6 = ax6.imshow(
         transform_matrix(agent_matrix, "reproduction_threshold"),
-        cmap="plasma",
+        
+        cmap="magma",
         vmin=0,
-        vmax=100,
+        vmax=50,
     )
     ax6.set_title("Agent Reproduction Threshold")
     plt.colorbar(im6, ax=ax6)
@@ -956,20 +975,17 @@ def run_game(trial_num, unique_results_dir):
     fig7, ax7 = plt.subplots()
     im7 = ax7.imshow(
         transform_matrix(agent_matrix, "genetic_distance"),
-        cmap="viridis",
+        cmap="magma",
         vmin=0,
-        vmax=200,
+        vmax=50,
     )
     ax7.set_title("Genetic Distance From Ancestor")
     plt.colorbar(im7, ax=ax7)
 
     fig8, ax8 = plt.subplots()
-    im8 = ax8.imshow(
-        transform_matrix(agent_matrix, "Species Distribution"),
-        cmap="tab20",
-        vmin=0,
-        vmax=200,
-    )
+    num_species_colors = 300  # Set the number of colors in the custom colormap
+    species_cmap = generate_large_cmap( num_species_colors)
+    im8 = ax8.imshow(transform_matrix(agent_matrix, "species"), cmap=species_cmap, vmin=0, vmax=num_species_colors-1)
     ax8.set_title("Agent Species")
     plt.colorbar(im8, ax=ax8)
 
@@ -1017,7 +1033,11 @@ def run_game(trial_num, unique_results_dir):
             im5.set_data(transform_matrix(agent_matrix, "metabolism"))
             im6.set_data(transform_matrix(agent_matrix, "reproduction_threshold"))
             im7.set_data(transform_matrix(agent_matrix, "genetic_distance"))
-            im8.set_data(transform_matrix(agent_matrix, "species"))
+
+
+            species_matrix = transform_matrix(agent_matrix, "species")
+            im8.set_data(species_matrix)
+            im8.set_clim(vmin=0, vmax=num_species_colors-1)
 
             # Draw the updated data on the canvas
             fig1.canvas.draw()
