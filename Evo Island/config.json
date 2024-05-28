@@ -2,7 +2,7 @@
     "experimental_trials": 1,
     "map_size": 300,
     "simulation_steps": 100,
-    "map_type": "perlin",
+    "map_type": "petri_dish",
     "use_random_perlin_params": false, 
     "use_rivers": true,
     "enable_violence": true,
@@ -12,8 +12,8 @@
     "food_generation_rate": 4,
     "initial_food": 50,
     "max_food_capacity": 50,
-    "speciation_threshold": 5,
+    "speciation_threshold": 10,
     "mutation_rate": 0.034,
-    "frame_save_interval": 3,
+    "frame_save_interval": 1,
     "frame_rate": 30
 }

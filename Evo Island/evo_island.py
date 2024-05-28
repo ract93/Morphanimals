@@ -927,37 +927,27 @@ def run_game(trial_num, unique_results_dir):
 
     # Declare plots for visualization
     fig1, ax1 = plt.subplots()
-    im1 = ax1.imshow(
-        transform_matrix(agent_matrix, "strength"), cmap="viridis", vmin=0, vmax=100
-    )
+    im1 = ax1.imshow(transform_matrix(agent_matrix, "strength"), cmap="viridis", vmin=0, vmax=100)
     ax1.set_title("Agent Strength")
     plt.colorbar(im1, ax=ax1)
 
     fig2, ax2 = plt.subplots()
-    im2 = ax2.imshow(
-        transform_matrix(agent_matrix, "hardiness"), cmap="viridis", vmin=0, vmax=100
-    )
+    im2 = ax2.imshow(transform_matrix(agent_matrix, "hardiness"), cmap="viridis", vmin=0, vmax=100)
     ax2.set_title("Agent Hardiness")
     plt.colorbar(im2, ax=ax2)
 
     fig3, ax3 = plt.subplots()
-    im3 = ax3.imshow(
-        transform_matrix(agent_matrix, "age"), cmap="viridis", vmin=0, vmax=50
-    )
+    im3 = ax3.imshow(transform_matrix(agent_matrix, "age"), cmap="viridis", vmin=0, vmax=50)
     ax3.set_title("Agent Age")
     plt.colorbar(im3, ax=ax3)
 
     fig4, ax4 = plt.subplots()
-    im4 = ax4.imshow(
-        transform_matrix(agent_matrix, "lifespan"), cmap="inferno", vmin=0, vmax=100
-    )
+    im4 = ax4.imshow(transform_matrix(agent_matrix, "lifespan"), cmap="inferno", vmin=0, vmax=100)
     ax4.set_title("Agent Max Lifespan")
     plt.colorbar(im4, ax=ax4)
 
     fig5, ax5 = plt.subplots()
-    im5 = ax5.imshow(
-        transform_matrix(agent_matrix, "metabolism"), cmap="inferno", vmin=0, vmax=100
-    )
+    im5 = ax5.imshow(transform_matrix(agent_matrix, "metabolism"), cmap="inferno", vmin=0, vmax=100)
     ax5.set_title("Agent Metabolism")
     plt.colorbar(im5, ax=ax5)
 
@@ -1061,32 +1051,14 @@ def run_game(trial_num, unique_results_dir):
 
         # Capture images at specified intervals
         if current_sim_step in capture_intervals:
-            fig1.savefig(
-                os.path.join(images_dir, f"strength_step_{current_sim_step}.png")
-            )
-            fig2.savefig(
-                os.path.join(images_dir, f"hardiness_step_{current_sim_step}.png")
-            )
+            fig1.savefig(os.path.join(images_dir, f"strength_step_{current_sim_step}.png"))
+            fig2.savefig(os.path.join(images_dir, f"hardiness_step_{current_sim_step}.png"))
             fig3.savefig(os.path.join(images_dir, f"age_step_{current_sim_step}.png"))
-            fig4.savefig(
-                os.path.join(images_dir, f"lifespan_step_{current_sim_step}.png")
-            )
-            fig5.savefig(
-                os.path.join(images_dir, f"metabolism_step_{current_sim_step}.png")
-            )
-            fig6.savefig(
-                os.path.join(
-                    images_dir, f"reproduction_threshold_step_{current_sim_step}.png"
-                )
-            )
-            fig7.savefig(
-                os.path.join(
-                    images_dir, f"genetic_distance_step_{current_sim_step}.png"
-                )
-            )
-            fig8.savefig(
-                os.path.join(images_dir, f"species_step_{current_sim_step}.png")
-            )
+            fig4.savefig(os.path.join(images_dir, f"lifespan_step_{current_sim_step}.png"))
+            fig5.savefig(os.path.join(images_dir, f"metabolism_step_{current_sim_step}.png"))
+            fig6.savefig(os.path.join(images_dir, f"reproduction_threshold_step_{current_sim_step}.png"))
+            fig7.savefig(os.path.join(images_dir, f"genetic_distance_step_{current_sim_step}.png"))
+            fig8.savefig(os.path.join(images_dir, f"species_step_{current_sim_step}.png"))
 
     plt.close(fig1)
     plt.close(fig2)
