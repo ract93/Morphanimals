@@ -176,6 +176,7 @@ class Agent:
     def __init__(self):
         self.alive = False
         self.genome = None
+        self.color = None  # Add color attribute
         self.age = 0
         self.energy_reserves = 0
         self.genetic_distance = None
@@ -189,6 +190,7 @@ class Agent:
         live_agent.genome = (
             genome if genome is not None else cls.generate_default_genome()
         )
+        live_agent.color = cls.genome_to_color(live_agent.genome)  # Calculate color
         live_agent.decode_genome()
         live_agent.calculate_genetic_distance()  # Calculate genetic distance from ancestor
         live_agent.energy_reserves = 5
@@ -266,7 +268,22 @@ class Agent:
     def kill_agent(self):
         self.alive = False
         self.genome = None
+        self.color = None  # Reset color attribute
         self.reset_traits()
+
+    @staticmethod
+    def genome_to_color(genome):
+        """ Convert a genome to a color in HSL space """
+        # Normalize genome values to [0, 1] range
+        norm_genome = (genome - np.min(genome)) / (np.max(genome) - np.min(genome))
+
+        # Map normalized values to HSL space
+        hue = (norm_genome[0] * 360) % 360
+        saturation = 50 + norm_genome[1] * 50  # Keep saturation between 50% and 100%
+        lightness = 50 + norm_genome[2] * 50   # Keep lightness between 50% and 100%
+
+        return mcolors.hsv_to_rgb((hue / 360, saturation / 100, lightness / 100))
+
 
 
 class SimulationMetrics:
@@ -661,7 +678,11 @@ def simulate_agent_time_step(current_step, i, j, environment, agent_matrix, metr
 
 # Matrix Creation, Visualization, Saving
 def transform_matrix(agent_matrix, attribute):
-    return [[getattr(agent, attribute, 0) for agent in row] for row in agent_matrix]
+    if attribute == "color":
+        return [[(getattr(agent, attribute, (0, 0, 0)) if agent.alive else (0, 0, 0)) for agent in row] for row in agent_matrix]
+    else:
+        return [[getattr(agent, attribute, 0) for agent in row] for row in agent_matrix]
+
 
 def generate_large_cmap(num_colors):
     """ Generate a large colormap with num_colors unique colors based on tab20, tab20b, and tab20c """
@@ -972,12 +993,13 @@ def run_game(trial_num, unique_results_dir):
     ax7.set_title("Genetic Distance From Ancestor")
     plt.colorbar(im7, ax=ax7)
 
+    # Special treatment for species
     fig8, ax8 = plt.subplots()
-    num_species_colors = 300  # Set the number of colors in the custom colormap
-    species_cmap = generate_large_cmap( num_species_colors)
-    im8 = ax8.imshow(transform_matrix(agent_matrix, "species"), cmap=species_cmap, vmin=0, vmax=num_species_colors-1)
-    ax8.set_title("Agent Species")
+    im8 = ax8.imshow(transform_matrix(agent_matrix, "color"))
+    ax8.set_title("Agent Species by Genome Color")
     plt.colorbar(im8, ax=ax8)
+
+
 
     # Main game loop
     print("Running Simulation...\n")
@@ -1023,11 +1045,7 @@ def run_game(trial_num, unique_results_dir):
             im5.set_data(transform_matrix(agent_matrix, "metabolism"))
             im6.set_data(transform_matrix(agent_matrix, "reproduction_threshold"))
             im7.set_data(transform_matrix(agent_matrix, "genetic_distance"))
-
-
-            species_matrix = transform_matrix(agent_matrix, "species")
-            im8.set_data(species_matrix)
-            im8.set_clim(vmin=0, vmax=num_species_colors-1)
+            im8.set_data(transform_matrix(agent_matrix, "color"))
 
             # Draw the updated data on the canvas
             fig1.canvas.draw()

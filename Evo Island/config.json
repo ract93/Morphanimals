@@ -14,6 +14,6 @@
     "max_food_capacity": 50,
     "speciation_threshold": 10,
     "mutation_rate": 0.034,
-    "frame_save_interval": 1,
+    "frame_save_interval": 3,
     "frame_rate": 30
 }
