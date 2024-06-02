@@ -176,7 +176,7 @@ class Agent:
     def __init__(self):
         self.alive = False
         self.genome = None
-        self.color = None  # Add color attribute
+        self.color = None  # Agent color is based on its genome
         self.age = 0
         self.energy_reserves = 0
         self.genetic_distance = None
@@ -684,23 +684,6 @@ def transform_matrix(agent_matrix, attribute):
         return [[getattr(agent, attribute, 0) for agent in row] for row in agent_matrix]
 
 
-def generate_large_cmap(num_colors):
-    """ Generate a large colormap with num_colors unique colors based on tab20, tab20b, and tab20c """
-    tab20 = plt.get_cmap('tab20').colors
-    tab20b = plt.get_cmap('tab20b').colors
-    tab20c = plt.get_cmap('tab20c').colors
-    
-    combined_colors = list(tab20) + list(tab20b) + list(tab20c)
-    extended_colors = []
-
-    for i in range(num_colors):
-        base_color = combined_colors[i % len(combined_colors)]
-        variation = i // len(combined_colors)
-        varied_color = tuple(min(1, c + (variation * 0.05)) for c in base_color)
-        extended_colors.append(varied_color)
-
-    return mcolors.ListedColormap(extended_colors)
-
 def save_matrix_image(matrix, file_name):
     fig, ax = plt.subplots()
     im = ax.imshow(matrix, cmap="viridis")
@@ -928,13 +911,18 @@ def run_game(trial_num, unique_results_dir):
     os.makedirs(gifs_dir, exist_ok=True)
     os.makedirs(images_dir, exist_ok=True)
 
-    # Calculate intervals for capturing images
+    # Calculate intervals for capturing static images
     capture_intervals = [
-        simulation_steps // 4,
-        simulation_steps // 2,
-        3 * simulation_steps // 4,
-        simulation_steps,
-    ]
+    simulation_steps // 8,
+    2 * simulation_steps // 8,
+    3 * simulation_steps // 8,
+    4 * simulation_steps // 8,
+    5 * simulation_steps // 8,
+    6 * simulation_steps // 8,
+    7 * simulation_steps // 8,
+    simulation_steps,
+]
+
 
     # Declare data frames for gif generation
     strength_frames = []
@@ -990,13 +978,13 @@ def run_game(trial_num, unique_results_dir):
         vmin=0,
         vmax=50,
     )
-    ax7.set_title("Genetic Distance From Ancestor")
+    ax7.set_title("Genetic Distance From Common Ancestor")
     plt.colorbar(im7, ax=ax7)
 
     # Special treatment for species
     fig8, ax8 = plt.subplots()
     im8 = ax8.imshow(transform_matrix(agent_matrix, "color"))
-    ax8.set_title("Agent Species by Genome Color")
+    ax8.set_title("Agent Species Distribution")
     plt.colorbar(im8, ax=ax8)
 
 
