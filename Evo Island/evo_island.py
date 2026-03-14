@@ -243,11 +243,11 @@ class Agent:
     def age_agent(self):
         self.age += 1
         if config["enable_aging"]:
-            # Use a sigmoid function to calculate death probability
-            midpoint = (
-                self.lifespan / 2
-            )  # The age at which the death probability is 0.5
-            steepness = 10  # Adjust this value to control the steepness of the curve
+            midpoint = self.lifespan / 2
+            if midpoint == 0:
+                self.kill_agent()
+                return
+            steepness = 10
             death_probability = 1 / (
                 1 + math.exp(-steepness * (self.age - midpoint) / midpoint)
             )
