@@ -3,6 +3,7 @@ import json
 import math
 import os
 import random
+import shutil
 
 import cupy as cp
 import imageio
@@ -714,148 +715,20 @@ def get_image_from_fig(fig):
     return image
 
 
-def create_trial_notebook(csv_file_path, notebook_path, config):
-    # Create a new notebook object
-    nb = nbf.v4.new_notebook()
+def create_trial_notebook(trial_dir, notebook_path):
+    template_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "notebooks", "trial_analysis.ipynb")
+    shutil.copy(template_path, notebook_path)
 
-    # Convert the JSON config to a Python dictionary string that can be evaluated in the notebook
-    config_str = json.dumps(config).replace('true', 'True').replace('false', 'False')
-
-    # Add cells with the necessary code
-    cells = []
-
-    # Cell to import libraries
-    cells.append(
-        nbf.v4.new_code_cell(
-            """\
-import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
-sns.set(style='whitegrid')"""
-        )
-    )
-
-    # Cell to load data
-    cells.append(
-        nbf.v4.new_code_cell(
-            f"""\
-data = pd.read_csv('{csv_file_path}')"""
-        )
-    )
-
-    # Cell to include config
-    cells.append(
-        nbf.v4.new_code_cell(
-            f"""\
-config = {config_str}"""
-        )
-    )
-
-    # Cell to calculate and display summary statistics
-    cells.append(
-        nbf.v4.new_code_cell(
-            """\
-# Columns of interest
-columns_of_interest = [
-    "Population Count",
-    "Cumulative Deaths",
-    "Deaths from Aging",
-    "Deaths from Competition",
-    "Deaths from Starvation",
-    "Deaths from Exposure",
-    "Average Age",
-    "Average Lifespan",
-    "Average Strength",
-    "Average Hardiness",
-    "Average Metabolism",
-    "Average Reproduction Threshold",
-    "Number of Species"
-]
-
-# Calculate and display meaningful statistics
-summary_stats = data[columns_of_interest].describe().loc[["mean", "min", "50%", "max"]]
-summary_stats.rename(index={"50%": "median"}, inplace=True)
-summary_stats"""
-        )
-    )
-
-    # Cell to plot gene value averages over time
-    cells.append(
-        nbf.v4.new_code_cell(
-            """\
-plt.figure(figsize=(12, 6))
-if config["enable_aging"]:
-    plt.plot(data['Timestep'], data['Average Lifespan'], label='Average Maximum Lifespan')
-    plt.plot(data['Timestep'], data['Average Age'], label='Average Age')
-if config["enable_violence"]:
-    plt.plot(data['Timestep'], data['Average Strength'], label='Average Strength')
-if config["enable_food"]:
-    plt.plot(data['Timestep'], data['Average Metabolism'], label='Average Metabolism')
-    plt.plot(data['Timestep'], data['Average Reproduction Threshold'], label='Average Reproduction Threshold')
-plt.plot(data['Timestep'], data['Average Hardiness'], label='Average Hardiness')
-plt.xlabel('Timestep')
-plt.ylabel('Value')
-plt.title('Time Series of Average Gene Values')
-plt.legend()
-plt.show()"""
-        )
-    )
-
-    # Cell to plot deaths over time
-    cells.append(
-        nbf.v4.new_code_cell(
-            """\
-plt.figure(figsize=(12, 6))
-if config["enable_aging"]:
-    plt.plot(data['Timestep'], data['Deaths from Aging'], label='Deaths from Aging')
-if config["enable_violence"]:
-    plt.plot(data['Timestep'], data['Deaths from Competition'], label='Deaths from Competition')
-if config["enable_food"]:
-    plt.plot(data['Timestep'], data['Deaths from Starvation'], label='Deaths from Starvation')
-plt.plot(data['Timestep'], data['Deaths from Exposure'], label='Deaths from Exposure')
-
-plt.xlabel('Timestep')
-plt.ylabel('Value')
-plt.title('Agent Deaths Over Time')
-plt.legend()
-plt.show()"""
-        )
-    )
-
-    # Cell to plot number of species over time
-    cells.append(
-        nbf.v4.new_code_cell(
-            """\
-plt.figure(figsize=(12, 6))
-plt.plot(data['Timestep'], data['Number of Species'], label='Number of Species')
-plt.xlabel('Timestep')
-plt.ylabel('Number of Species')
-plt.title('Number of Species Over Time')
-plt.legend()
-plt.show()"""
-        )
-    )
-
-    # Add cells to the notebook
-    nb["cells"] = cells
-
-    # Write the notebook to a new file
-    with open(notebook_path, "w") as f:
-        nbf.write(nb, f)
-
-    print(f"Notebook created at {notebook_path}")
-
-    # Try to execute the notebook and handle exceptions
     executed_notebook_path = notebook_path.replace(".ipynb", "_executed.ipynb")
     try:
+        with open(notebook_path) as f:
+            nb = nbf.read(f, as_version=4)
         ep = ExecutePreprocessor(timeout=600, kernel_name="python3")
-        ep.preprocess(nb, {"metadata": {"path": "./"}})
+        ep.preprocess(nb, {"metadata": {"path": trial_dir}})
         with open(executed_notebook_path, "w", encoding="utf-8") as f:
             nbf.write(nb, f)
         print("Executed notebook saved at", executed_notebook_path)
-        # Delete the original unexecuted notebook if execution is successful
         os.remove(notebook_path)
-
     except Exception as e:
         print("Error during notebook execution:", e)
 
@@ -1121,12 +994,13 @@ def run_game(trial_num, unique_results_dir):
     # Close metrics file
     metrics.close_csv_logging()
 
+    # Save config alongside the CSV so the notebook can load it
+    with open(os.path.join(trial_dir, "config.json"), "w") as f:
+        json.dump(config, f)
+
     # Create metrics notebook
-    csv_file_path = os.path.join(trial_dir, "simulation_metrics.csv")
     notebook_path = os.path.join(trial_dir, "analysis_notebook.ipynb")
-    create_trial_notebook(
-        csv_file_path, notebook_path, config
-    )
+    create_trial_notebook(trial_dir, notebook_path)
 
     print(f"Trial {trial_num} complete.\n")
 
@@ -1175,220 +1049,29 @@ def aggregate_results(
     aggregated_csv_path = os.path.join(unique_results_dir, "aggregated_metrics.csv")
     aggregated_df.to_csv(aggregated_csv_path, index=False)
 
+    # Save config alongside the aggregated CSV so the notebook can load it
+    with open(os.path.join(unique_results_dir, "config.json"), "w") as f:
+        json.dump(config, f)
+
     # Create a summary Jupyter notebook
     summary_notebook_path = os.path.join(unique_results_dir, "summary_notebook.ipynb")
-    create_aggregate_notebook(
-        aggregated_csv_path,
-        summary_notebook_path,
-        config  # Pass the config here
-    )
+    create_aggregate_notebook(unique_results_dir, summary_notebook_path)
 
 
-def create_aggregate_notebook(
-    aggregated_csv_path,
-    notebook_path,
-    config
-):
-    # Create a new notebook object
-    nb = nbf.v4.new_notebook()
+def create_aggregate_notebook(unique_results_dir, notebook_path):
+    template_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "notebooks", "aggregate_analysis.ipynb")
+    shutil.copy(template_path, notebook_path)
 
-    # Add cells with the necessary code
-    cells = []
-
-    # Cell to import libraries
-    cells.append(
-        nbf.v4.new_code_cell(
-            """\
-import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
-sns.set(style='whitegrid')
-import numpy as np"""
-        )
-    )
-
-    # Cell to load data
-    cells.append(
-        nbf.v4.new_code_cell(
-            f"""\
-data = pd.read_csv('{aggregated_csv_path}')"""
-        )
-    )
-
-    # Cell to calculate and display summary statistics
-    cells.append(
-        nbf.v4.new_code_cell(
-            """\
-# Columns of interest
-columns_of_interest = [
-    "Population Count",
-    "Cumulative Deaths",
-    "Deaths from Aging",
-    "Deaths from Competition",
-    "Deaths from Starvation",
-    "Deaths from Exposure",
-    "Average Age",
-    "Average Lifespan",
-    "Average Strength",
-    "Average Hardiness",
-    "Average Metabolism",
-    "Average Reproduction Threshold",
-    "Number of Species"
-]
-
-# Calculate and display meaningful statistics
-summary_stats = data[columns_of_interest].describe().loc[["mean", "std", "min", "50%", "max"]]
-summary_stats.rename(index={"50%": "median"}, inplace=True)
-
-# Calculate variance separately
-variance = data[columns_of_interest].var()
-variance_df = pd.DataFrame(variance, columns=['var']).T
-
-# Combine summary_stats with variance
-summary_stats = pd.concat([summary_stats, variance_df])
-
-summary_stats
-"""
-        )
-    )
-
-    # Cell to plot gene value averages over time with error bars
-    gene_value_code = """\
-plt.figure(figsize=(12, 6))
-
-timesteps = data['Timestep'].unique()
-"""
-
-    if config["enable_aging"]:
-        gene_value_code += """\
-average_lifespan = data.groupby('Timestep')['Average Lifespan'].mean()
-std_lifespan = data.groupby('Timestep')['Average Lifespan'].std()
-plt.errorbar(timesteps, average_lifespan, yerr=std_lifespan, label='Average Maximum Lifespan', fmt='-o')
-
-average_age = data.groupby('Timestep')['Average Age'].mean()
-std_age = data.groupby('Timestep')['Average Age'].std()
-plt.errorbar(timesteps, average_age, yerr=std_age, label='Average Age', fmt='-o')
-"""
-    if config["enable_food"]:
-        gene_value_code += """\
-average_metabolism = data.groupby('Timestep')['Average Metabolism'].mean()
-std_metabolism = data.groupby('Timestep')['Average Metabolism'].std()
-plt.errorbar(timesteps, average_metabolism, yerr=std_metabolism, label='Average Metabolism', fmt='-o')
-
-average_reproduction_threshold = data.groupby('Timestep')['Average Reproduction Threshold'].mean()
-std_reproduction_threshold = data.groupby('Timestep')['Average Reproduction Threshold'].std()
-plt.errorbar(timesteps, average_reproduction_threshold, yerr=std_reproduction_threshold, label='Average Reproduction Threshold', fmt='-o')
-"""
-    if config["enable_violence"]:
-        gene_value_code += """\
-average_strength = data.groupby('Timestep')['Average Strength'].mean()
-std_strength = data.groupby('Timestep')['Average Strength'].std()
-plt.errorbar(timesteps, average_strength, yerr=std_strength, label='Average Strength', fmt='-o')
-"""
-
-    gene_value_code += """\
-average_hardiness = data.groupby('Timestep')['Average Hardiness'].mean()
-std_hardiness = data.groupby('Timestep')['Average Hardiness'].std()
-plt.errorbar(timesteps, average_hardiness, yerr=std_hardiness, label='Average Hardiness', fmt='-o')
-
-plt.xlabel('Timestep')
-plt.ylabel('Value')
-plt.title('Time Series of Average Gene Values Across All Trials')
-plt.legend()
-plt.show()
-"""
-    cells.append(nbf.v4.new_code_cell(gene_value_code))
-
-    # Cell to plot deaths over time with error bars
-    deaths_code = """\
-plt.figure(figsize=(12, 6))
-
-timesteps = data['Timestep'].unique()
-"""
-
-    if config["enable_aging"]:
-        deaths_code += """\
-deaths_from_aging = data.groupby('Timestep')['Deaths from Aging'].sum()
-std_deaths_from_aging = data.groupby('Timestep')['Deaths from Aging'].std()
-plt.errorbar(timesteps, deaths_from_aging, yerr=std_deaths_from_aging, label='Deaths from Aging', fmt='-o')
-"""
-    if config["enable_violence"]:
-        deaths_code += """\
-deaths_from_competition = data.groupby('Timestep')['Deaths from Competition'].sum()
-std_deaths_from_competition = data.groupby('Timestep')['Deaths from Competition'].std()
-plt.errorbar(timesteps, deaths_from_competition, yerr=std_deaths_from_competition, label='Deaths from Competition', fmt='-o')
-"""
-    if config["enable_food"]:
-        deaths_code += """\
-deaths_from_starvation = data.groupby('Timestep')['Deaths from Starvation'].sum()
-std_deaths_from_starvation = data.groupby('Timestep')['Deaths from Starvation'].std()
-plt.errorbar(timesteps, deaths_from_starvation, yerr=std_deaths_from_starvation, label='Deaths from Starvation', fmt='-o')
-"""
-
-    deaths_code += """\
-deaths_from_exposure = data.groupby('Timestep')['Deaths from Exposure'].sum()
-std_deaths_from_exposure = data.groupby('Timestep')['Deaths from Exposure'].std()
-plt.errorbar(timesteps, deaths_from_exposure, yerr=std_deaths_from_exposure, label='Deaths from Exposure', fmt='-o')
-
-plt.xlabel('Timestep')
-plt.ylabel('Total Deaths')
-plt.title('Agent Deaths Over Time Across All Trials')
-plt.legend()
-plt.show()
-"""
-    cells.append(nbf.v4.new_code_cell(deaths_code))
-
-    # Cell to plot number of species over time with error bars
-    cells.append(
-        nbf.v4.new_code_cell(
-            """\
-plt.figure(figsize=(12, 6))
-timesteps = data['Timestep'].unique()
-average_species = data.groupby('Timestep')['Number of Species'].mean()
-std_species = data.groupby('Timestep')['Number of Species'].std()
-plt.errorbar(timesteps, average_species, yerr=std_species, label='Average Number of Species', fmt='-o')
-plt.xlabel('Timestep')
-plt.ylabel('Number of Species')
-plt.title('Number of Species Over Time Across All Trials')
-plt.legend()
-plt.show()"""
-        )
-    )
-
-    # Cell to plot histogram of number of species
-    cells.append(
-        nbf.v4.new_code_cell(
-            """\
-plt.figure(figsize=(12, 6))
-species_counts = data['Number of Species']
-plt.hist(species_counts, bins=10, alpha=0.7)
-plt.xlabel('Number of Species')
-plt.ylabel('Frequency')
-plt.title('Histogram of Number of Species Across All Trials')
-plt.show()"""
-        )
-    )
-
-    # Add cells to the notebook
-    nb["cells"] = cells
-
-    # Write the notebook to a new file
-    with open(notebook_path, "w") as f:
-        nbf.write(nb, f)
-
-    print(f"Summary notebook created at {notebook_path}")
-
-    # Try to execute the notebook and handle exceptions
     executed_notebook_path = notebook_path.replace(".ipynb", "_executed.ipynb")
     try:
+        with open(notebook_path) as f:
+            nb = nbf.read(f, as_version=4)
         ep = ExecutePreprocessor(timeout=600, kernel_name="python3")
-        ep.preprocess(nb, {"metadata": {"path": "./"}})
+        ep.preprocess(nb, {"metadata": {"path": unique_results_dir}})
         with open(executed_notebook_path, "w", encoding="utf-8") as f:
             nbf.write(nb, f)
         print("Executed summary notebook saved at", executed_notebook_path)
-        # Delete the original unexecuted notebook if execution is successful
         os.remove(notebook_path)
-
     except Exception as e:
         print("Error during notebook execution:", e)
 
