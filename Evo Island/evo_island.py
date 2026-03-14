@@ -57,7 +57,7 @@ class Environment:
             return []
 
         array = [[0] * n for _ in range(n)]
-        increment = 4 / (n - 1)
+        increment = 4 / (n - 1) if n > 1 else 0
 
         for i in range(n):
             for j in range(n):
@@ -91,7 +91,8 @@ class Environment:
                     base=0,
                 )
 
-        world = (world - np.min(world)) * (5 - 1) / (np.max(world) - np.min(world)) + 1
+        world_range = np.max(world) - np.min(world)
+        world = (world - np.min(world)) * (5 - 1) / (world_range if world_range != 0 else 1) + 1
         world = np.round(world).astype(int)
 
         return world
@@ -128,7 +129,8 @@ class Environment:
 
         max_val = np.max(grid)
         min_val = np.min(grid)
-        scaled_grid = (grid - min_val) / (max_val - min_val)
+        grid_range = max_val - min_val
+        scaled_grid = (grid - min_val) / (grid_range if grid_range != 0 else 1)
 
         river_width = n // 50
         river_path = [(i, scaled_grid[i, n // 2]) for i in range(n)]
@@ -282,7 +284,8 @@ class Agent:
     def genome_to_color(genome):
         """ Convert a genome to a color in HSL space """
         # Normalize genome values to [0, 1] range
-        norm_genome = (genome - np.min(genome)) / (np.max(genome) - np.min(genome))
+        genome_range = np.max(genome) - np.min(genome)
+        norm_genome = (genome - np.min(genome)) / (genome_range if genome_range != 0 else 1)
 
         # Map normalized values to HSL space
         hue = (norm_genome[0] * 360) % 360
