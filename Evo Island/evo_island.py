@@ -373,20 +373,18 @@ class SimulationMetrics:
         if self.csv_logging_enabled:
             self.csv_file.close()
 
-    def update_agent_metrics(self, agent_matrix):
-        # Iterate over each agent in the matrix
+    def update_agent_metrics(self, agent_matrix, live_agents):
         species_set = set()
-        for row in agent_matrix:
-            for agent in row:
-                if agent.alive:  # Only consider agents that are alive
-                    self.total_age += agent.age
-                    self.total_lifespan += agent.lifespan
-                    self.total_strength += agent.strength
-                    self.total_hardiness += agent.hardiness
-                    self.total_metabolism += agent.metabolism
-                    self.total_reproduction_threshold += agent.reproduction_threshold
-                    self.population_count += 1
-                    species_set.add(agent.species)
+        for (i, j) in live_agents:
+            agent = agent_matrix[i][j]
+            self.total_age += agent.age
+            self.total_lifespan += agent.lifespan
+            self.total_strength += agent.strength
+            self.total_hardiness += agent.hardiness
+            self.total_metabolism += agent.metabolism
+            self.total_reproduction_threshold += agent.reproduction_threshold
+            self.population_count += 1
+            species_set.add(agent.species)
 
         self.species_counts = len(species_set)
 
@@ -423,91 +421,30 @@ class SimulationMetrics:
         )
 
 
-# Calculates the genetic similarity globally and per biome.
-# Either 10% of the global population and per biome population is sampled, or atleast 30 individuals of each population.
-def calculate_genetic_similarity(agent_matrix, world_matrix, min_sample_size=30, fraction=1.0):
-    def genetic_similarity(agents):
-        num_agents = len(agents)
-        if num_agents < 2:
-            return 1.0  # Maximum similarity if there's only one agent or none
-
-        # Determine the sample size, which will be all agents because fraction is 1
-        sample_size = max(min_sample_size, int(num_agents * fraction))
-
-        # Sample a subset of agents
-        if num_agents > sample_size:
-            agents = random.sample(agents, sample_size)
-
-        genomes = np.array([agent.genome for agent in agents])
-
-        total_distance = 0.0
-        num_comparisons = 0
-        for i in range(len(genomes)):
-            dists = np.linalg.norm(genomes[i] - genomes, axis=1)
-            total_distance += np.sum(dists)
-            num_comparisons += len(dists)
-
-        average_distance = total_distance / num_comparisons if num_comparisons > 0 else 0
-        return float(1 / (1 + average_distance))
-
-    # Filter out dead agents
-    living_agents = [agent for row in agent_matrix for agent in row if agent.alive]
-    global_similarity = genetic_similarity(living_agents)
-
-    # Group agents by biome (difficulty level)
-    biomes = {}
-    for i, row in enumerate(agent_matrix):
-        for j, agent in enumerate(row):
-            if agent.alive:
-                difficulty = world_matrix[i][j]
-                if difficulty not in biomes:
-                    biomes[difficulty] = []
-                biomes[difficulty].append(agent)
-
-    biome_similarities = {}
-    for difficulty, agents in biomes.items():
-        if len(agents) >= min_sample_size:
-            biome_similarities[difficulty] = genetic_similarity(agents)
-
-    return global_similarity, biome_similarities
-
-
-def print_genetic_similarities(global_similarity, biome_similarities):
-    print(f"Global Genetic Similarity: {global_similarity:.4f}")
-    for difficulty, similarity in biome_similarities.items():
-        print(f"Genetic Similarity in Biome {difficulty}: {similarity:.4f}")
-
 
 # Speciation Functions
-def classify_species(agent_matrix, threshold=config["speciation_threshold"]):
+def classify_species(agent_matrix, live_agents, threshold=config["speciation_threshold"]):
     species_counter = 1
-    species_representatives = []
+    rep_genomes = []   # parallel arrays — avoids attribute lookup inside hot loop
+    rep_labels = []
 
-    for row in agent_matrix:
-        for agent in row:
-            if agent.alive:
-                assigned = False
-                for rep in species_representatives:
-                    if agent.calculate_genetic_distance(rep.genome) < threshold:
-                        agent.species = rep.species
-                        assigned = True
-                        break
+    for (i, j) in live_agents:
+        agent = agent_matrix[i][j]
+        assigned = False
+        if rep_genomes:
+            rep_arr = np.stack(rep_genomes)                          # (S, 5)
+            dists = np.linalg.norm(rep_arr - agent.genome, axis=1)  # (S,) — one call
+            idx = int(np.argmin(dists))
+            if dists[idx] < threshold:
+                agent.species = rep_labels[idx]
+                assigned = True
 
-                if not assigned:
-                    agent.species = species_counter
-                    species_representatives.append(agent)
-                    species_counter += 1
+        if not assigned:
+            agent.species = species_counter
+            rep_genomes.append(agent.genome)
+            rep_labels.append(species_counter)
+            species_counter += 1
 
-
-def collect_species_genomes(agent_matrix):
-    species_genomes = {}
-    for row in agent_matrix:
-        for agent in row:
-            if agent.alive:
-                if agent.species not in species_genomes:
-                    species_genomes[agent.species] = []
-                species_genomes[agent.species].append(agent.genome.tolist())
-    return species_genomes
 
 
 # Simulation Logic
@@ -523,7 +460,7 @@ def initialize_agent_matrix(n):
     return [[Agent() for j in range(n)] for i in range(n)]
 
 
-def simulate_agent_time_step(current_step, i, j, environment, agent_matrix, metrics):
+def simulate_agent_time_step(current_step, i, j, environment, agent_matrix, metrics, live_agents):
     # Check if current cell has a live agent
     current_agent = agent_matrix[i][j]
     if not current_agent.alive:
@@ -535,6 +472,7 @@ def simulate_agent_time_step(current_step, i, j, environment, agent_matrix, metr
     if not current_agent.alive and was_alive_before_aging:
         metrics.deaths_from_aging += 1
         metrics.cumulative_deaths += 1
+        live_agents.discard((i, j))
         return
 
     # Food Consumption Logic
@@ -546,6 +484,7 @@ def simulate_agent_time_step(current_step, i, j, environment, agent_matrix, metr
             agent_matrix[i][j].kill_agent()
             metrics.deaths_from_starvation += 1
             metrics.cumulative_deaths += 1
+            live_agents.discard((i, j))
             return
 
         food_available = environment.calculate_food_available(i, j, current_step)
@@ -559,6 +498,7 @@ def simulate_agent_time_step(current_step, i, j, environment, agent_matrix, metr
             agent_matrix[i][j].kill_agent()
             metrics.deaths_from_starvation += 1
             metrics.cumulative_deaths += 1
+            live_agents.discard((i, j))
             return
 
     if config["enable_reproduction_threshold"] and config["enable_food"]:
@@ -609,11 +549,13 @@ def simulate_agent_time_step(current_step, i, j, environment, agent_matrix, metr
                             > agent_matrix[new_i][new_j].strength
                         ):
                             agent_matrix[new_i][new_j] = new_individual
+                            # position stays in live_agents — still occupied
                             return
                         # If the new agent is weaker or equal in strength, it dies, and no change is made to the cell
                     else:
                         # The prospective cell is empty, the new agent just occupies it with no competition
                         agent_matrix[new_i][new_j] = new_individual
+                        live_agents.add((new_i, new_j))
                         return
                 else:
                     # New individual dies from exposure as it wasnt hardy enough
@@ -655,10 +597,12 @@ def simulate_agent_time_step(current_step, i, j, environment, agent_matrix, metr
                     metrics.cumulative_deaths += 1
                     if new_individual.strength > agent_matrix[new_i][new_j].strength:
                         agent_matrix[new_i][new_j] = new_individual
+                        # position stays in live_agents — still occupied
                     # If the new individual is weaker or equal in strength, it dies, and no change is made to the cell
                 else:
                     # The prospective cell is empty, the new individual just occupies it with no competition
                     agent_matrix[new_i][new_j] = new_individual
+                    live_agents.add((new_i, new_j))
             else:
                 # New individual dies from exposure as it wasnt hardy enough
                 metrics.deaths_from_exposure += 1
@@ -681,38 +625,17 @@ def save_matrix_image(matrix, file_name):
     plt.savefig(str(file_name))
 
 
-def save_agent_matrix_image(matrix, file_name, attribute):
-    # Check if the attribute is valid for the objects in the matrix
-    if not matrix or not hasattr(matrix[0][0], attribute):
-        raise ValueError(f"Attribute '{attribute}' not found in matrix elements")
 
-    # Transform the matrix into a 2D array of the specified attribute
-    transformed_matrix = [[getattr(cell, attribute) for cell in row] for row in matrix]
-
-    fig, ax = plt.subplots()
-    im = ax.imshow(transformed_matrix, cmap="viridis")
-    plt.colorbar(im, ax=ax)  # Optional: Adds a colorbar to the plot
-    plt.savefig(str(file_name))
-    plt.close(fig)
-
-
-def get_image_from_fig(fig):
-    fig.canvas.draw()
-    image = np.frombuffer(fig.canvas.buffer_rgba(), dtype="uint8")
-    image = image.reshape(fig.canvas.get_width_height()[::-1] + (4,))[:, :, :3]
-    return image
-
-
-def render_and_save_gifs(frames, captures, gifs_dir, images_dir, frame_rate):
-    gif_specs = [
-        ("strength",               "viridis", 0,   100, "strength_map.gif"),
-        ("hardiness",              "viridis", 0,   100, "hardiness_map.gif"),
-        ("age",                    "viridis", 0,    50, "age_map.gif"),
-        ("lifespan",               "inferno", 0,   100, "lifespan_map.gif"),
-        ("metabolism",             "inferno", 0,   100, "metabolism_map.gif"),
-        ("reproduction_threshold", "magma",   0,    50, "reproduction_threshold_map.gif"),
-        ("genetic_distance",       "magma",   0,    50, "genetic_drift_map.gif"),
-        ("color",                  None,      None, None, "species_map.gif"),
+def render_and_save_videos(frames, captures, videos_dir, images_dir, frame_rate):
+    video_specs = [
+        ("strength",               "viridis", 0,   100, "strength_map.mp4"),
+        ("hardiness",              "viridis", 0,   100, "hardiness_map.mp4"),
+        ("age",                    "viridis", 0,    50, "age_map.mp4"),
+        ("lifespan",               "inferno", 0,   100, "lifespan_map.mp4"),
+        ("metabolism",             "inferno", 0,   100, "metabolism_map.mp4"),
+        ("reproduction_threshold", "magma",   0,    50, "reproduction_threshold_map.mp4"),
+        ("genetic_distance",       "magma",   0,    50, "genetic_drift_map.mp4"),
+        ("color",                  None,      None, None, "species_map.mp4"),
     ]
 
     def to_rgb(raw, cmap_name, vmin, vmax):
@@ -723,9 +646,9 @@ def render_and_save_gifs(frames, captures, gifs_dir, images_dir, frame_rate):
         return (plt.get_cmap(cmap_name)(norm(arr))[:, :, :3] * 255).astype(np.uint8)
 
     def save_one(spec):
-        attr, cmap_name, vmin, vmax, gif_filename = spec
+        attr, cmap_name, vmin, vmax, filename = spec
         rgb_frames = [to_rgb(f, cmap_name, vmin, vmax) for f in frames[attr]]
-        imageio.mimsave(os.path.join(gifs_dir, gif_filename), rgb_frames, fps=frame_rate)
+        imageio.mimsave(os.path.join(videos_dir, filename), rgb_frames, fps=frame_rate, macro_block_size=1)
         for step, raw in captures[attr]:
             imageio.imwrite(
                 os.path.join(images_dir, f"{attr}_step_{step}.png"),
@@ -733,7 +656,7 @@ def render_and_save_gifs(frames, captures, gifs_dir, images_dir, frame_rate):
             )
 
     with ThreadPoolExecutor() as executor:
-        futures = [executor.submit(save_one, spec) for spec in gif_specs]
+        futures = [executor.submit(save_one, spec) for spec in video_specs]
         for f in futures:
             f.result()
 
@@ -784,7 +707,6 @@ def run_game(trial_num, unique_results_dir, status_queue=None):
             #if isinstance(value, dict):
                 #for sub_key, sub_value in value.items():
                     #f.write(f"  {sub_key}: {sub_value}\n")
-
     # Initialize the environment
     environment = Environment(config)
 
@@ -801,11 +723,12 @@ def run_game(trial_num, unique_results_dir, status_queue=None):
     agent_matrix[agent_starting_pos[0]][
         agent_starting_pos[1]
     ] = Agent.create_live_agent()
+    live_agents = {(agent_starting_pos[0], agent_starting_pos[1])}
 
-    # Create directories for GIFs and images
-    gifs_dir = os.path.join(trial_dir, "Gifs")
+    # Create directories for videos and images
+    videos_dir = os.path.join(trial_dir, "Videos")
     images_dir = os.path.join(trial_dir, "Images")
-    os.makedirs(gifs_dir, exist_ok=True)
+    os.makedirs(videos_dir, exist_ok=True)
     os.makedirs(images_dir, exist_ok=True)
 
     # Calculate intervals for capturing static images
@@ -833,21 +756,16 @@ def run_game(trial_num, unique_results_dir, status_queue=None):
     current_sim_step = 0
 
     while current_sim_step < simulation_steps:
-        living_agents_count = 0
-
-        for i in range(len(agent_matrix)):
-            for j in range(len(agent_matrix[0])):
-                if agent_matrix[i][j].alive:
-                    living_agents_count += 1
-                    simulate_agent_time_step(
-                        current_sim_step, i, j, environment, agent_matrix, metrics
-                    )
+        for (i, j) in list(live_agents):  # snapshot so births this step don't act until next
+            simulate_agent_time_step(
+                current_sim_step, i, j, environment, agent_matrix, metrics, live_agents
+            )
 
         # Assign species labels to agents
-        classify_species(agent_matrix)
+        classify_species(agent_matrix, live_agents)
 
         # Calculate and collect metrics
-        metrics.update_agent_metrics(agent_matrix)
+        metrics.update_agent_metrics(agent_matrix, live_agents)
         metrics.calculate_averages()
         metrics.log_metrics(current_sim_step)
         if status_queue is not None:
@@ -856,7 +774,7 @@ def run_game(trial_num, unique_results_dir, status_queue=None):
 
         current_sim_step += 1
 
-        if living_agents_count == 0:
+        if not live_agents:
             if status_queue is not None:
                 status_queue.put((trial_num, f"Trial {trial_num} | All agents died at step {current_sim_step}"))
             break
@@ -869,18 +787,7 @@ def run_game(trial_num, unique_results_dir, status_queue=None):
             for attr in captures:
                 captures[attr].append((current_sim_step, np.array(transform_matrix(agent_matrix, attr))))
 
-    render_and_save_gifs(frames, captures, gifs_dir, images_dir, frame_rate)
-
-    # Calculate genetic similarities at the final step
-    #print("Calculating genetic similarity....\n")
-    #global_similarity, biome_similarities = calculate_genetic_similarity(
-    #    agent_matrix, environment.world_matrix, min_sample_size=30, fraction=1
-    #)
-
-    #print_genetic_similarities(global_similarity, biome_similarities)
-
-    # Collect species genomes
-    species_genomes = collect_species_genomes(agent_matrix)
+    render_and_save_videos(frames, captures, videos_dir, images_dir, frame_rate)
 
     # Close metrics file
     metrics.close_csv_logging()
@@ -895,8 +802,6 @@ def run_game(trial_num, unique_results_dir, status_queue=None):
 
     if status_queue is not None:
         status_queue.put((trial_num, f"Trial {trial_num} | Done"))
-
-    #return global_similarity, biome_similarities
 
 
 def run_experiment():

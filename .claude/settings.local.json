@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python evo_island.py)"
+      "Bash(python evo_island.py)",
+      "Bash(pip install:*)",
+      "Bash(pip show:*)"
     ]
   }
 }
