@@ -1,13 +1,16 @@
+import asyncio
 import csv
+import warnings
 import json
 import math
 import multiprocessing
 import os
 import random
 import shutil
+import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
 
-import cupy as cp
 import imageio
 import matplotlib.pyplot as plt
 import nbformat as nbf
@@ -19,6 +22,7 @@ from nbconvert.preprocessors import ExecutePreprocessor
 from noise import pnoise2
 from PIL import Image
 
+warnings.filterwarnings("ignore", ".*missing an id field.*")
 
 # Config
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
@@ -405,25 +409,20 @@ class SimulationMetrics:
         self.total_reproduction_threshold = 0
         self.population_count = 0
 
-    def print_current_state(self):
-        # Format and print the current state in a single line
-        print(
-            f"Population: {self.population_count}, "
-            f"Cumulative Deaths: {self.cumulative_deaths} (Deaths by Aging: {self.deaths_from_aging}, "
-            f"Deaths by Competition: {self.death_from_competition}, Deaths by Starvation: {self.deaths_from_starvation}, "
-            f"Deaths by Exposure: {self.deaths_from_exposure}), "
-            f"Avg Age: {self.average_age:.2f}, Avg Lifespan: {self.average_lifespan:.2f}, "
-            f"Avg Strength: {self.average_strength:.2f}, "
-            f"Avg Hardiness: {self.average_hardiness:.2f}, "
-            f"Avg Metabolism: {self.average_metabolism:.2f}, "
-            f"Avg Reproduction Threshold: {self.average_reproduction_threshold:.2f}, "
-            f"Number of Species: {self.species_counts}"
+    def get_state_string(self, trial_num, step, total_steps):
+        return (
+            f"Trial {trial_num} | Step {step}/{total_steps} | "
+            f"Pop:{self.population_count} | "
+            f"Deaths:{self.cumulative_deaths}(Age:{self.deaths_from_aging} Comp:{self.death_from_competition} Starv:{self.deaths_from_starvation} Exp:{self.deaths_from_exposure}) | "
+            f"Age:{self.average_age:.1f} Life:{self.average_lifespan:.1f} Str:{self.average_strength:.1f} "
+            f"Hard:{self.average_hardiness:.1f} Metab:{self.average_metabolism:.1f} Repr:{self.average_reproduction_threshold:.1f} | "
+            f"Species:{self.species_counts}"
         )
 
 
 # Calculates the genetic similarity globally and per biome.
 # Either 10% of the global population and per biome population is sampled, or atleast 30 individuals of each population.
-def calculate_genetic_similarity(agent_matrix, world_matrix, min_sample_size=30, fraction=1.0, overhead_factor=0.1):
+def calculate_genetic_similarity(agent_matrix, world_matrix, min_sample_size=30, fraction=1.0):
     def genetic_similarity(agents):
         num_agents = len(agents)
         if num_agents < 2:
@@ -436,33 +435,17 @@ def calculate_genetic_similarity(agent_matrix, world_matrix, min_sample_size=30,
         if num_agents > sample_size:
             agents = random.sample(agents, sample_size)
 
-        # Convert agents' genomes to CuPy arrays
-        genomes = cp.array([agent.genome for agent in agents])
+        genomes = np.array([agent.genome for agent in agents])
 
-        # Get total GPU memory and calculate chunk size
-        gpu_mem_info = cp.cuda.runtime.memGetInfo()
-        total_mem = gpu_mem_info[1]
-        free_mem = gpu_mem_info[0]
-        available_mem = free_mem - int(total_mem * overhead_factor)
-        genome_size = genomes.nbytes / num_agents
-        chunk_size = int(available_mem / genome_size)
-
-        # Initialize variables for incremental computation
         total_distance = 0.0
         num_comparisons = 0
-
-        # Compute pairwise distances in chunks to fit in GPU memory
-        for start in range(0, num_agents, chunk_size):
-            end = min(start + chunk_size, num_agents)
-            chunk_genomes = genomes[start:end]
-
-            for i in range(len(chunk_genomes)):
-                dists = cp.linalg.norm(chunk_genomes[i] - genomes, axis=1)
-                total_distance += cp.sum(dists)
-                num_comparisons += len(dists)
+        for i in range(len(genomes)):
+            dists = np.linalg.norm(genomes[i] - genomes, axis=1)
+            total_distance += np.sum(dists)
+            num_comparisons += len(dists)
 
         average_distance = total_distance / num_comparisons if num_comparisons > 0 else 0
-        return float(1 / (1 + average_distance))  # Inverse of the average distance
+        return float(1 / (1 + average_distance))
 
     # Filter out dead agents
     living_agents = [agent for row in agent_matrix for agent in row if agent.alive]
@@ -746,36 +729,36 @@ def render_and_save_gifs(frames, captures, gifs_dir, images_dir, frame_rate):
                 to_rgb(raw, cmap_name, vmin, vmax)
             )
 
-    print("Rendering GIFs...")
     with ThreadPoolExecutor() as executor:
         futures = [executor.submit(save_one, spec) for spec in gif_specs]
         for f in futures:
             f.result()
 
 
-def create_trial_notebook(trial_dir, notebook_path):
+def create_trial_notebook(trial_dir, notebook_path, status_queue=None, trial_num=None):
     template_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "notebooks", "trial_analysis.ipynb")
     shutil.copy(template_path, notebook_path)
 
     executed_notebook_path = notebook_path.replace(".ipynb", "_executed.ipynb")
     try:
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
         with open(notebook_path) as f:
             nb = nbf.read(f, as_version=4)
         ep = ExecutePreprocessor(timeout=600, kernel_name="python3")
         ep.preprocess(nb, {"metadata": {"path": trial_dir}})
         with open(executed_notebook_path, "w", encoding="utf-8") as f:
             nbf.write(nb, f)
-        print("Executed notebook saved at", executed_notebook_path)
         os.remove(notebook_path)
     except Exception as e:
-        print("Error during notebook execution:", e)
+        if status_queue is not None and trial_num is not None:
+            status_queue.put((trial_num, f"Trial {trial_num} | Notebook error: {e}"))
+        else:
+            print("Error during notebook execution:", e)
 
-    print("Notebook creation process complete.")
 
 
 
-
-def run_game(trial_num, unique_results_dir, verbose=False):
+def run_game(trial_num, unique_results_dir, status_queue=None):
     # Create the trial-specific directory within the unique results directory
     trial_dir = os.path.join(unique_results_dir, f"Trial_{trial_num}")
     os.makedirs(trial_dir, exist_ok=True)
@@ -844,8 +827,6 @@ def run_game(trial_num, unique_results_dir, verbose=False):
 
 
     # Main game loop
-    if verbose:
-        print("Running Simulation...\n")
     current_sim_step = 0
 
     while current_sim_step < simulation_steps:
@@ -866,20 +847,15 @@ def run_game(trial_num, unique_results_dir, verbose=False):
         metrics.update_agent_metrics(agent_matrix)
         metrics.calculate_averages()
         metrics.log_metrics(current_sim_step)
-        if verbose:
-            metrics.print_current_state()
-            print()
+        if status_queue is not None:
+            status_queue.put((trial_num, metrics.get_state_string(trial_num, current_sim_step, simulation_steps)))
         metrics.reset_averages()
 
         current_sim_step += 1
-        if verbose:
-            print(f"\rSimulation Step {current_sim_step}/{simulation_steps}", end="")
-            print()
 
         if living_agents_count == 0:
-            if verbose:
-                print()
-                print("All agents have died. Ending simulation at step", current_sim_step)
+            if status_queue is not None:
+                status_queue.put((trial_num, f"Trial {trial_num} | All agents died at step {current_sim_step}"))
             break
 
         if current_sim_step % frame_save_interval == 0:
@@ -890,8 +866,6 @@ def run_game(trial_num, unique_results_dir, verbose=False):
             for attr in captures:
                 captures[attr].append((current_sim_step, np.array(transform_matrix(agent_matrix, attr))))
 
-    if verbose:
-        print()
     render_and_save_gifs(frames, captures, gifs_dir, images_dir, frame_rate)
 
     # Calculate genetic similarities at the final step
@@ -914,10 +888,10 @@ def run_game(trial_num, unique_results_dir, verbose=False):
 
     # Create metrics notebook
     notebook_path = os.path.join(trial_dir, "analysis_notebook.ipynb")
-    create_trial_notebook(trial_dir, notebook_path)
+    create_trial_notebook(trial_dir, notebook_path, status_queue, trial_num)
 
-    if verbose:
-        print(f"Trial {trial_num} complete.\n")
+    if status_queue is not None:
+        status_queue.put((trial_num, f"Trial {trial_num} | Done"))
 
     #return global_similarity, biome_similarities
 
@@ -934,15 +908,41 @@ def run_experiment():
 
     num_experimental_trials = config.get("experimental_trials", 1)
 
-    args = [(trial, unique_results_dir, trial == 1) for trial in range(1, num_experimental_trials + 1)]
+    manager = multiprocessing.Manager()
+    status_queue = manager.Queue()
+    args = [(trial, unique_results_dir, status_queue) for trial in range(1, num_experimental_trials + 1)]
+
+    # Reserve one line per trial
+    for i in range(1, num_experimental_trials + 1):
+        print(f"Trial {i} | Starting...")
+    sys.stdout.flush()
+
+    def flush_queue():
+        while not status_queue.empty():
+            trial_num, message = status_queue.get_nowait()
+            lines_up = num_experimental_trials - trial_num + 1
+            sys.stdout.write(f"\033[{lines_up}A\r\033[2K{message}\033[{lines_up}B")
+        sys.stdout.flush()
+
     pool = multiprocessing.Pool()
     try:
-        pool.starmap_async(run_game, args).get(timeout=99999)
+        async_result = pool.starmap_async(run_game, args)
+        while not async_result.ready():
+            flush_queue()
+            time.sleep(0.1)
+        flush_queue()
+        pool.close()
     except KeyboardInterrupt:
         print("\nInterrupted — terminating workers...")
         pool.terminate()
     finally:
         pool.join()
+    print()
+    for trial in range(1, num_experimental_trials + 1):
+        path = os.path.abspath(os.path.join(unique_results_dir, f"Trial_{trial}", "analysis_notebook_executed.ipynb"))
+        if os.path.exists(path):
+            from pathlib import Path
+            print(f"  Trial {trial}: {Path(path).as_uri()}")
 
     aggregate_results(
         unique_results_dir,
@@ -985,6 +985,7 @@ def create_aggregate_notebook(unique_results_dir, notebook_path):
 
     executed_notebook_path = notebook_path.replace(".ipynb", "_executed.ipynb")
     try:
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
         with open(notebook_path) as f:
             nb = nbf.read(f, as_version=4)
         ep = ExecutePreprocessor(timeout=600, kernel_name="python3")
