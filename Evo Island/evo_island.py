@@ -709,8 +709,8 @@ def save_agent_matrix_image(matrix, file_name, attribute):
 
 def get_image_from_fig(fig):
     fig.canvas.draw()
-    image = np.frombuffer(fig.canvas.tostring_rgb(), dtype="uint8")
-    image = image.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+    image = np.frombuffer(fig.canvas.buffer_rgba(), dtype="uint8")
+    image = image.reshape(fig.canvas.get_width_height()[::-1] + (4,))[:, :, :3]
     return image
 
 
