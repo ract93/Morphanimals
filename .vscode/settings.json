@@ -1,0 +1,11 @@
+{
+    "inlineChat.defaultModel": "Claude Opus 4.6 (claude-code)",
+    "inlineChat.notebookAgent": true,
+    "chat.tools.terminal.sandbox.enabled": true,
+    "chat.restoreLastPanelSession": true,
+    "chat.editMode.hidden": false,
+    "chat.checkpoints.showFileChanges": true,
+    "chat.agent.codeBlockProgress": false,
+    "chat.agent.thinking.collapsedTools": "off",
+    "chat.agent.thinking.generateTitles": true
+}
