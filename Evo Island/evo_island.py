@@ -1,9 +1,11 @@
 import csv
 import json
 import math
+import multiprocessing
 import os
 import random
 import shutil
+from concurrent.futures import ThreadPoolExecutor
 
 import cupy as cp
 import imageio
@@ -715,6 +717,42 @@ def get_image_from_fig(fig):
     return image
 
 
+def render_and_save_gifs(frames, captures, gifs_dir, images_dir, frame_rate):
+    gif_specs = [
+        ("strength",               "viridis", 0,   100, "strength_map.gif"),
+        ("hardiness",              "viridis", 0,   100, "hardiness_map.gif"),
+        ("age",                    "viridis", 0,    50, "age_map.gif"),
+        ("lifespan",               "inferno", 0,   100, "lifespan_map.gif"),
+        ("metabolism",             "inferno", 0,   100, "metabolism_map.gif"),
+        ("reproduction_threshold", "magma",   0,    50, "reproduction_threshold_map.gif"),
+        ("genetic_distance",       "magma",   0,    50, "genetic_drift_map.gif"),
+        ("color",                  None,      None, None, "species_map.gif"),
+    ]
+
+    def to_rgb(raw, cmap_name, vmin, vmax):
+        arr = np.array(raw)
+        if cmap_name is None:
+            return (arr * 255).astype(np.uint8)
+        norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
+        return (plt.get_cmap(cmap_name)(norm(arr))[:, :, :3] * 255).astype(np.uint8)
+
+    def save_one(spec):
+        attr, cmap_name, vmin, vmax, gif_filename = spec
+        rgb_frames = [to_rgb(f, cmap_name, vmin, vmax) for f in frames[attr]]
+        imageio.mimsave(os.path.join(gifs_dir, gif_filename), rgb_frames, fps=frame_rate)
+        for step, raw in captures[attr]:
+            imageio.imwrite(
+                os.path.join(images_dir, f"{attr}_step_{step}.png"),
+                to_rgb(raw, cmap_name, vmin, vmax)
+            )
+
+    print("Rendering GIFs...")
+    with ThreadPoolExecutor() as executor:
+        futures = [executor.submit(save_one, spec) for spec in gif_specs]
+        for f in futures:
+            f.result()
+
+
 def create_trial_notebook(trial_dir, notebook_path):
     template_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "notebooks", "trial_analysis.ipynb")
     shutil.copy(template_path, notebook_path)
@@ -737,7 +775,7 @@ def create_trial_notebook(trial_dir, notebook_path):
 
 
 
-def run_game(trial_num, unique_results_dir):
+def run_game(trial_num, unique_results_dir, verbose=False):
     # Create the trial-specific directory within the unique results directory
     trial_dir = os.path.join(unique_results_dir, f"Trial_{trial_num}")
     os.makedirs(trial_dir, exist_ok=True)
@@ -797,73 +835,17 @@ def run_game(trial_num, unique_results_dir):
 ]
 
 
-    # Declare data frames for gif generation
-    strength_frames = []
-    hardiness_frames = []
-    age_frames = []
-    lifespan_frames = []
-    metabolism_frames = []
-    reproduction_threshold_frames = []
-    genetic_distance_frames = []
-    species_frames = []
-
-    # Declare plots for visualization
-    fig1, ax1 = plt.subplots()
-    im1 = ax1.imshow(transform_matrix(agent_matrix, "strength"), cmap="viridis", vmin=0, vmax=100)
-    ax1.set_title("Agent Strength")
-    plt.colorbar(im1, ax=ax1)
-
-    fig2, ax2 = plt.subplots()
-    im2 = ax2.imshow(transform_matrix(agent_matrix, "hardiness"), cmap="viridis", vmin=0, vmax=100)
-    ax2.set_title("Agent Hardiness")
-    plt.colorbar(im2, ax=ax2)
-
-    fig3, ax3 = plt.subplots()
-    im3 = ax3.imshow(transform_matrix(agent_matrix, "age"), cmap="viridis", vmin=0, vmax=50)
-    ax3.set_title("Agent Age")
-    plt.colorbar(im3, ax=ax3)
-
-    fig4, ax4 = plt.subplots()
-    im4 = ax4.imshow(transform_matrix(agent_matrix, "lifespan"), cmap="inferno", vmin=0, vmax=100)
-    ax4.set_title("Agent Max Lifespan")
-    plt.colorbar(im4, ax=ax4)
-
-    fig5, ax5 = plt.subplots()
-    im5 = ax5.imshow(transform_matrix(agent_matrix, "metabolism"), cmap="inferno", vmin=0, vmax=100)
-    ax5.set_title("Agent Metabolism")
-    plt.colorbar(im5, ax=ax5)
-
-    fig6, ax6 = plt.subplots()
-    im6 = ax6.imshow(
-        transform_matrix(agent_matrix, "reproduction_threshold"),
-        
-        cmap="magma",
-        vmin=0,
-        vmax=50,
-    )
-    ax6.set_title("Agent Reproduction Threshold")
-    plt.colorbar(im6, ax=ax6)
-
-    fig7, ax7 = plt.subplots()
-    im7 = ax7.imshow(
-        transform_matrix(agent_matrix, "genetic_distance"),
-        cmap="magma",
-        vmin=0,
-        vmax=50,
-    )
-    ax7.set_title("Genetic Distance From Common Ancestor")
-    plt.colorbar(im7, ax=ax7)
-
-    # Special treatment for species
-    fig8, ax8 = plt.subplots()
-    im8 = ax8.imshow(transform_matrix(agent_matrix, "color"))
-    ax8.set_title("Agent Species Distribution")
-    plt.colorbar(im8, ax=ax8)
+    # Raw state snapshots — rendered after simulation completes
+    attrs = ["strength", "hardiness", "age", "lifespan",
+             "metabolism", "reproduction_threshold", "genetic_distance", "color"]
+    frames = {attr: [] for attr in attrs}
+    captures = {attr: [] for attr in attrs}
 
 
 
     # Main game loop
-    print("Running Simulation...\n")
+    if verbose:
+        print("Running Simulation...\n")
     current_sim_step = 0
 
     while current_sim_step < simulation_steps:
@@ -884,101 +866,33 @@ def run_game(trial_num, unique_results_dir):
         metrics.update_agent_metrics(agent_matrix)
         metrics.calculate_averages()
         metrics.log_metrics(current_sim_step)
-        metrics.print_current_state()
-        print()
+        if verbose:
+            metrics.print_current_state()
+            print()
         metrics.reset_averages()
 
         current_sim_step += 1
-        print(f"\rSimulation Step {current_sim_step}/{simulation_steps}", end="")
-        print()
+        if verbose:
+            print(f"\rSimulation Step {current_sim_step}/{simulation_steps}", end="")
+            print()
 
         if living_agents_count == 0:
-            print()
-            print("All agents have died. Ending simulation at step", current_sim_step)
+            if verbose:
+                print()
+                print("All agents have died. Ending simulation at step", current_sim_step)
             break
 
         if current_sim_step % frame_save_interval == 0:
-            # Draw canvas and convert attributes to an image array
-            im1.set_data(transform_matrix(agent_matrix, "strength"))
-            im2.set_data(transform_matrix(agent_matrix, "hardiness"))
-            im3.set_data(transform_matrix(agent_matrix, "age"))
-            im4.set_data(transform_matrix(agent_matrix, "lifespan"))
-            im5.set_data(transform_matrix(agent_matrix, "metabolism"))
-            im6.set_data(transform_matrix(agent_matrix, "reproduction_threshold"))
-            im7.set_data(transform_matrix(agent_matrix, "genetic_distance"))
-            im8.set_data(transform_matrix(agent_matrix, "color"))
+            for attr in frames:
+                frames[attr].append(np.array(transform_matrix(agent_matrix, attr)))
 
-            # Draw the updated data on the canvas
-            fig1.canvas.draw()
-            fig2.canvas.draw()
-            fig3.canvas.draw()
-            fig4.canvas.draw()
-            fig5.canvas.draw()
-            fig6.canvas.draw()
-            fig7.canvas.draw()
-            fig8.canvas.draw()
-
-            # Convert the updated canvas to an image and append to respective frame lists
-            strength_frames.append(get_image_from_fig(fig1))
-            hardiness_frames.append(get_image_from_fig(fig2))
-            age_frames.append(get_image_from_fig(fig3))
-            lifespan_frames.append(get_image_from_fig(fig4))
-            metabolism_frames.append(get_image_from_fig(fig5))
-            reproduction_threshold_frames.append(get_image_from_fig(fig6))
-            genetic_distance_frames.append(get_image_from_fig(fig7))
-            species_frames.append(get_image_from_fig(fig8))
-
-        # Capture images at specified intervals
         if current_sim_step in capture_intervals:
-            fig1.savefig(os.path.join(images_dir, f"strength_step_{current_sim_step}.png"))
-            fig2.savefig(os.path.join(images_dir, f"hardiness_step_{current_sim_step}.png"))
-            fig3.savefig(os.path.join(images_dir, f"age_step_{current_sim_step}.png"))
-            fig4.savefig(os.path.join(images_dir, f"lifespan_step_{current_sim_step}.png"))
-            fig5.savefig(os.path.join(images_dir, f"metabolism_step_{current_sim_step}.png"))
-            fig6.savefig(os.path.join(images_dir, f"reproduction_threshold_step_{current_sim_step}.png"))
-            fig7.savefig(os.path.join(images_dir, f"genetic_distance_step_{current_sim_step}.png"))
-            fig8.savefig(os.path.join(images_dir, f"species_step_{current_sim_step}.png"))
+            for attr in captures:
+                captures[attr].append((current_sim_step, np.array(transform_matrix(agent_matrix, attr))))
 
-    plt.close(fig1)
-    plt.close(fig2)
-    plt.close(fig3)
-    plt.close(fig4)
-    plt.close(fig5)
-    plt.close(fig6)
-    plt.close(fig7)
-    plt.close(fig8)
-
-    # Save GIFs
-    print()
-    print("Generating GIFs...")
-    imageio.mimsave(
-        os.path.join(gifs_dir, "strength_map.gif"), strength_frames, fps=frame_rate
-    )
-    imageio.mimsave(
-        os.path.join(gifs_dir, "hardiness_map.gif"), hardiness_frames, fps=frame_rate
-    )
-    imageio.mimsave(os.path.join(gifs_dir, "age_map.gif"), age_frames, fps=frame_rate)
-    imageio.mimsave(
-        os.path.join(gifs_dir, "lifespan_map.gif"), lifespan_frames, fps=frame_rate
-    )
-    imageio.mimsave(
-        os.path.join(gifs_dir, "metabolism_map.gif"), metabolism_frames, fps=frame_rate
-    )
-    imageio.mimsave(
-        os.path.join(gifs_dir, "reproduction_threshold_map.gif"),
-        reproduction_threshold_frames,
-        fps=frame_rate,
-    )
-    imageio.mimsave(
-        os.path.join(gifs_dir, "genetic_drift_map.gif"),
-        genetic_distance_frames,
-        fps=frame_rate,
-    )
-    imageio.mimsave(
-        os.path.join(gifs_dir, "species_map.gif"),
-        species_frames,
-        fps=frame_rate,
-    )
+    if verbose:
+        print()
+    render_and_save_gifs(frames, captures, gifs_dir, images_dir, frame_rate)
 
     # Calculate genetic similarities at the final step
     #print("Calculating genetic similarity....\n")
@@ -1002,7 +916,8 @@ def run_game(trial_num, unique_results_dir):
     notebook_path = os.path.join(trial_dir, "analysis_notebook.ipynb")
     create_trial_notebook(trial_dir, notebook_path)
 
-    print(f"Trial {trial_num} complete.\n")
+    if verbose:
+        print(f"Trial {trial_num} complete.\n")
 
     #return global_similarity, biome_similarities
 
@@ -1019,9 +934,15 @@ def run_experiment():
 
     num_experimental_trials = config.get("experimental_trials", 1)
 
-    for trial in range(1, num_experimental_trials + 1):
-        print(f"Starting Trial {trial}/{num_experimental_trials}")
-        run_game(trial, unique_results_dir)
+    args = [(trial, unique_results_dir, trial == 1) for trial in range(1, num_experimental_trials + 1)]
+    pool = multiprocessing.Pool()
+    try:
+        pool.starmap_async(run_game, args).get(timeout=99999)
+    except KeyboardInterrupt:
+        print("\nInterrupted — terminating workers...")
+        pool.terminate()
+    finally:
+        pool.join()
 
     aggregate_results(
         unique_results_dir,
