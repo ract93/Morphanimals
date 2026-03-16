@@ -1,4 +1,13 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
 
+# Simulation outputs
+Evo Island/Experimental_Results/
+
+# Claude
+.claude/settings.local.json
 
 # Logs
 logs
