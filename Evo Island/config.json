@@ -1,7 +1,7 @@
 {
-    "experimental_trials": 2,
-    "map_size": 300,
-    "simulation_steps": 300,
+    "experimental_trials": 1,
+    "map_size": 1000,
+    "simulation_steps": 1000,
     "map_type": "perlin",
     "use_random_perlin_params": false, 
     "use_rivers": true,

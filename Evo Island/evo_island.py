@@ -220,8 +220,7 @@ class Agent:
         return Agent.common_ancestor_genome.copy()
 
     @staticmethod
-    def mutate_genome(genome):
-        mutation_rate = config["mutation_rate"]
+    def mutate_genome(genome, mutation_rate):
         mutation_effects = np.zeros_like(genome)
         for i in range(len(genome)):
             if np.random.rand() < mutation_rate:
@@ -238,13 +237,13 @@ class Agent:
         return self.genetic_distance
 
     @classmethod
-    def reproduce_asexually(cls, parent_agent):
-        child_genome = cls.mutate_genome(parent_agent.genome)
+    def reproduce_asexually(cls, parent_agent, mutation_rate):
+        child_genome = cls.mutate_genome(parent_agent.genome, mutation_rate)
         return cls.create_live_agent(child_genome)
 
-    def age_agent(self):
+    def age_agent(self, enable_aging):
         self.age += 1
-        if config["enable_aging"]:
+        if enable_aging:
             midpoint = self.lifespan / 2
             if midpoint == 0:
                 self.kill_agent()
@@ -423,7 +422,7 @@ class SimulationMetrics:
 
 
 # Speciation Functions
-def classify_species(agent_matrix, live_agents, threshold=config["speciation_threshold"]):
+def classify_species(agent_matrix, live_agents, threshold):
     species_counter = 1
     rep_genomes = []   # parallel arrays — avoids attribute lookup inside hot loop
     rep_labels = []
@@ -460,7 +459,7 @@ def initialize_agent_matrix(n):
     return [[Agent() for j in range(n)] for i in range(n)]
 
 
-def simulate_agent_time_step(current_step, i, j, environment, agent_matrix, metrics, live_agents):
+def simulate_agent_time_step(current_step, i, j, environment, agent_matrix, metrics, live_agents, cfg):
     # Check if current cell has a live agent
     current_agent = agent_matrix[i][j]
     if not current_agent.alive:
@@ -468,7 +467,7 @@ def simulate_agent_time_step(current_step, i, j, environment, agent_matrix, metr
 
     # Age Logic
     was_alive_before_aging = current_agent.alive
-    current_agent.age_agent()
+    current_agent.age_agent(cfg["enable_aging"])
     if not current_agent.alive and was_alive_before_aging:
         metrics.deaths_from_aging += 1
         metrics.cumulative_deaths += 1
@@ -476,7 +475,7 @@ def simulate_agent_time_step(current_step, i, j, environment, agent_matrix, metr
         return
 
     # Food Consumption Logic
-    if config["enable_food"]:
+    if cfg["enable_food"]:
 
         # First, check if agent survived reproduction last turn.
         if current_agent.energy_reserves <= 0:
@@ -501,7 +500,7 @@ def simulate_agent_time_step(current_step, i, j, environment, agent_matrix, metr
             live_agents.discard((i, j))
             return
 
-    if config["enable_reproduction_threshold"] and config["enable_food"]:
+    if cfg["enable_reproduction_threshold"] and cfg["enable_food"]:
 
         can_reproduce = (
             current_agent.energy_reserves >= current_agent.reproduction_threshold
@@ -513,7 +512,7 @@ def simulate_agent_time_step(current_step, i, j, environment, agent_matrix, metr
             current_agent.metabolize(
                 current_agent.reproduction_threshold
             )  # Deduct reproduction cost
-            new_individual = Agent.reproduce_asexually(current_agent)
+            new_individual = Agent.reproduce_asexually(current_agent, cfg["mutation_rate"])
             diceroll = random.randint(1, 9)
             movement_offsets = {
                 1: (0, 0),
@@ -539,7 +538,7 @@ def simulate_agent_time_step(current_step, i, j, environment, agent_matrix, metr
                     ]
                 ):
                     # Check if cell is already occupied and competition is allowed
-                    if agent_matrix[new_i][new_j].alive and config["enable_violence"]:
+                    if agent_matrix[new_i][new_j].alive and cfg["enable_violence"]:
                         # Aggression here
                         metrics.death_from_competition += 1
                         metrics.cumulative_deaths += 1
@@ -568,7 +567,7 @@ def simulate_agent_time_step(current_step, i, j, environment, agent_matrix, metr
 
     else:  # Food and Reproduction_Threshold Logic is off
         # At this point, agent has survived current turn and reproduces if it has enough food to meet threshold.
-        new_individual = Agent.reproduce_asexually(current_agent)
+        new_individual = Agent.reproduce_asexually(current_agent, cfg["mutation_rate"])
         diceroll = random.randint(1, 9)
         movement_offsets = {
             1: (0, 0),
@@ -591,7 +590,7 @@ def simulate_agent_time_step(current_step, i, j, environment, agent_matrix, metr
                 new_individual.hardiness
                 > environment.level_difficulty[environment.world_matrix[new_i][new_j]]
             ):
-                if agent_matrix[new_i][new_j].alive and config["enable_violence"]:
+                if agent_matrix[new_i][new_j].alive and cfg["enable_violence"]:
                     # One or the other agent in comeptition dies, so its safe to increment here.
                     metrics.death_from_competition += 1
                     metrics.cumulative_deaths += 1
@@ -684,7 +683,7 @@ def create_trial_notebook(trial_dir, notebook_path, status_queue=None, trial_num
 
 
 
-def run_game(trial_num, unique_results_dir, status_queue=None):
+def run_game(trial_num, unique_results_dir, status_queue, cfg):
     # Create the trial-specific directory within the unique results directory
     trial_dir = os.path.join(unique_results_dir, f"Trial_{trial_num}")
     os.makedirs(trial_dir, exist_ok=True)
@@ -695,9 +694,9 @@ def run_game(trial_num, unique_results_dir, status_queue=None):
     metrics.enable_csv_logging(csv_file_path)
 
     # Use the map configurations
-    simulation_steps = config["simulation_steps"]
-    frame_save_interval = config["frame_save_interval"]
-    frame_rate = config["frame_rate"]
+    simulation_steps = cfg["simulation_steps"]
+    frame_save_interval = cfg["frame_save_interval"]
+    frame_rate = cfg["frame_rate"]
 
     # Save the config of the experimental run as a text file
     #config_file_path = os.path.join(trial_dir, "config.txt")
@@ -708,7 +707,7 @@ def run_game(trial_num, unique_results_dir, status_queue=None):
                 #for sub_key, sub_value in value.items():
                     #f.write(f"  {sub_key}: {sub_value}\n")
     # Initialize the environment
-    environment = Environment(config)
+    environment = Environment(cfg)
 
     # Save environment
     save_matrix_image(environment.world_matrix, os.path.join(trial_dir, "Game_World"))
@@ -758,11 +757,11 @@ def run_game(trial_num, unique_results_dir, status_queue=None):
     while current_sim_step < simulation_steps:
         for (i, j) in list(live_agents):  # snapshot so births this step don't act until next
             simulate_agent_time_step(
-                current_sim_step, i, j, environment, agent_matrix, metrics, live_agents
+                current_sim_step, i, j, environment, agent_matrix, metrics, live_agents, cfg
             )
 
         # Assign species labels to agents
-        classify_species(agent_matrix, live_agents)
+        classify_species(agent_matrix, live_agents, cfg["speciation_threshold"])
 
         # Calculate and collect metrics
         metrics.update_agent_metrics(agent_matrix, live_agents)
@@ -794,7 +793,7 @@ def run_game(trial_num, unique_results_dir, status_queue=None):
 
     # Save config alongside the CSV so the notebook can load it
     with open(os.path.join(trial_dir, "config.json"), "w") as f:
-        json.dump(config, f)
+        json.dump(cfg, f)
 
     # Create metrics notebook
     notebook_path = os.path.join(trial_dir, "analysis_notebook.ipynb")
@@ -818,7 +817,7 @@ def run_experiment():
 
     manager = multiprocessing.Manager()
     status_queue = manager.Queue()
-    args = [(trial, unique_results_dir, status_queue) for trial in range(1, num_experimental_trials + 1)]
+    args = [(trial, unique_results_dir, status_queue, config) for trial in range(1, num_experimental_trials + 1)]
 
     # Reserve one line per trial
     for i in range(1, num_experimental_trials + 1):
