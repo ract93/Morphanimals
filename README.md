@@ -1,3 +1,43 @@
+## Setup
+
+### Requirements
+- Python 3.12+
+- A C++ compiler (MSVC via Visual Studio 2022 on Windows)
+
+### Install Python dependencies
+```bash
+pip install noise numpy matplotlib imageio pillow pandas nbformat nbconvert pybind11 scikit-build-core
+```
+
+### Build the C++ simulation core
+The hot-path simulation loop is implemented in C++ and compiled as a Python extension (`evo_core`). Build it once before running:
+```bash
+cd "Evo Island"
+pip install -e .
+```
+This produces `evo_core.cp312-win_amd64.pyd` (Windows) alongside `evo_island.py`. Rerun after any changes to files in `cpp/`.
+
+### Run
+```bash
+python "Evo Island/evo_island.py"
+```
+Results are written to `Evo Island/Experimental_Results/<timestamp>/`.
+
+---
+
+## Project Structure
+```
+Evo Island/
+  evo_island.py        Entry point — loads config, starts experiment
+  config.json          All simulation parameters (see below)
+  CMakeLists.txt       C++ build definition
+  pyproject.toml       Python build config (scikit-build-core)
+  cpp/                 C++ simulation core (Agent, step loop, speciation)
+  py/                  Python modules (environment, metrics, visualization, notebooks, experiment)
+```
+
+---
+
 ## Configuration Settings Guide
 
 - **map_size**: The size of the simulation grid.

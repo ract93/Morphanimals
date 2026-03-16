@@ -1,8 +1,12 @@
 import json
 import os
+import sys
 import warnings
 
 warnings.filterwarnings("ignore", ".*missing an id field.*")
+
+# Add py/ to the path so all module imports inside py/ resolve without changes.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "py"))
 
 from experiment import run_experiment
 
