@@ -54,10 +54,15 @@ def run_game(trial_num, unique_results_dir, status_queue, cfg):
     if start_pos is None:
         start_pos = (0, 0)
 
+    # Normalise world_matrix to a plain list (perlin maps are numpy arrays)
+    wm = environment.world_matrix
+    if hasattr(wm, "tolist"):
+        wm = wm.tolist()
+
     # Hand terrain + food matrices to the C++ simulation core
     sim = _CppSimulation(
         cfg,
-        environment.world_matrix,
+        wm,
         environment.food_matrix,
         start_pos[0],
         start_pos[1],

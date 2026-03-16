@@ -10,12 +10,18 @@ from notebooks import create_aggregate_notebook, create_trial_notebook
 from simulation import run_game
 
 
+def _worker_init(py_dir):
+    """Add py/ to sys.path in each spawned worker (Windows spawn doesn't inherit it)."""
+    if py_dir not in sys.path:
+        sys.path.insert(0, py_dir)
+
+
 def run_experiment(config):
     base_results_dir = os.path.join("Experimental_Results")
 
     # Prompt the user for the name of the experimental run
     experiment_name = input("Please enter a name for this experimental run: ")
-    unique_results_dir = os.path.join(base_results_dir, experiment_name)
+    unique_results_dir = os.path.abspath(os.path.join(base_results_dir, experiment_name))
 
     # Ensure the unique results directory exists
     os.makedirs(unique_results_dir, exist_ok=True)
@@ -38,13 +44,16 @@ def run_experiment(config):
             sys.stdout.write(f"\033[{lines_up}A\r\033[2K{message}\033[{lines_up}B")
         sys.stdout.flush()
 
-    pool = multiprocessing.Pool()
+    # Workers on Windows (spawn) don't inherit sys.path — re-add py/ explicitly.
+    py_dir = os.path.dirname(os.path.abspath(__file__))
+    pool = multiprocessing.Pool(initializer=_worker_init, initargs=(py_dir,))
     try:
         async_result = pool.starmap_async(run_game, args)
         while not async_result.ready():
             flush_queue()
             time.sleep(0.1)
         flush_queue()
+        async_result.get()  # re-raises any worker exception
         pool.close()
     except KeyboardInterrupt:
         print("\nInterrupted — terminating workers...")

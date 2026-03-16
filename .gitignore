@@ -6,6 +6,12 @@ __pycache__/
 # Simulation outputs
 Evo Island/Experimental_Results/
 
+# C++ build artifacts (CMake / scikit-build-core)
+Evo Island/build/
+*.pyd
+*.egg-info/
+*.dist-info/
+
 # Claude
 .claude/settings.local.json
 

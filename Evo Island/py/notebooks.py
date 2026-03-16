@@ -7,7 +7,7 @@ from nbconvert.preprocessors import ExecutePreprocessor
 
 
 def create_trial_notebook(trial_dir, notebook_path, status_queue=None, trial_num=None):
-    template_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "notebooks", "trial_analysis.ipynb")
+    template_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "notebooks", "trial_analysis.ipynb")
     shutil.copy(template_path, notebook_path)
 
     executed_notebook_path = notebook_path.replace(".ipynb", "_executed.ipynb")

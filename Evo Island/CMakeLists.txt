@@ -19,3 +19,5 @@ target_compile_options(evo_core PRIVATE
     $<$<CXX_COMPILER_ID:MSVC>:/O2 /arch:AVX2>
     $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-O3 -march=native>
 )
+
+install(TARGETS evo_core DESTINATION .)
