@@ -5,7 +5,7 @@ import numpy as np
 
 from environment import Environment
 from metrics import SimulationMetrics
-from visualization import render_and_save_videos, save_matrix_image
+from visualization import open_frame_writers, save_capture_images, save_matrix_image
 
 try:
     from evo_core import Simulation as _CppSimulation
@@ -86,60 +86,64 @@ def run_game(trial_num, unique_results_dir, status_queue, cfg):
 
     attrs = ["strength", "hardiness", "age", "lifespan",
              "metabolism", "reproduction_threshold", "genetic_distance", "color"]
-    frames   = {attr: [] for attr in attrs}
+    writers  = open_frame_writers(videos_dir, frame_rate)
     captures = {attr: [] for attr in attrs}
 
     current_sim_step = 0
 
-    while current_sim_step < simulation_steps:
-        result = sim.step(current_sim_step)
+    try:
+        while current_sim_step < simulation_steps:
+            result = sim.step(current_sim_step)
 
-        # Accumulate cumulative death counters from per-step deltas
-        metrics.deaths_from_aging      += result.deaths_aging
-        metrics.death_from_competition += result.deaths_competition
-        metrics.deaths_from_starvation += result.deaths_starvation
-        metrics.deaths_from_exposure   += result.deaths_exposure
-        metrics.cumulative_deaths      += (
-            result.deaths_aging + result.deaths_competition +
-            result.deaths_starvation + result.deaths_exposure
-        )
-
-        # Per-step totals for average calculation (reset by reset_averages)
-        metrics.population_count                 = result.population_count
-        metrics.species_counts                   = result.species_counts
-        metrics.total_age                        = result.total_age
-        metrics.total_lifespan                   = result.total_lifespan
-        metrics.total_strength                   = result.total_strength
-        metrics.total_hardiness                  = result.total_hardiness
-        metrics.total_metabolism                 = result.total_metabolism
-        metrics.total_reproduction_threshold     = result.total_reproduction_threshold
-
-        metrics.calculate_averages()
-        metrics.log_metrics(current_sim_step)
-        if status_queue is not None:
-            status_queue.put(
-                (trial_num, metrics.get_state_string(trial_num, current_sim_step, simulation_steps))
+            # Accumulate cumulative death counters from per-step deltas
+            metrics.deaths_from_aging      += result.deaths_aging
+            metrics.death_from_competition += result.deaths_competition
+            metrics.deaths_from_starvation += result.deaths_starvation
+            metrics.deaths_from_exposure   += result.deaths_exposure
+            metrics.cumulative_deaths      += (
+                result.deaths_aging + result.deaths_competition +
+                result.deaths_starvation + result.deaths_exposure
             )
-        metrics.reset_averages()
 
-        current_sim_step += 1
+            # Per-step totals for average calculation (reset by reset_averages)
+            metrics.population_count                 = result.population_count
+            metrics.species_counts                   = result.species_counts
+            metrics.total_age                        = result.total_age
+            metrics.total_lifespan                   = result.total_lifespan
+            metrics.total_strength                   = result.total_strength
+            metrics.total_hardiness                  = result.total_hardiness
+            metrics.total_metabolism                 = result.total_metabolism
+            metrics.total_reproduction_threshold     = result.total_reproduction_threshold
 
-        if result.extinct:
+            metrics.calculate_averages()
+            metrics.log_metrics(current_sim_step)
             if status_queue is not None:
                 status_queue.put(
-                    (trial_num, f"Trial {trial_num} | All agents died at step {current_sim_step}")
+                    (trial_num, metrics.get_state_string(trial_num, current_sim_step, simulation_steps))
                 )
-            break
+            metrics.reset_averages()
 
-        if current_sim_step % frame_save_interval == 0:
-            for attr in frames:
-                frames[attr].append(sim.get_attribute_matrix(attr))
+            current_sim_step += 1
 
-        if current_sim_step in capture_intervals:
-            for attr in captures:
-                captures[attr].append((current_sim_step, sim.get_attribute_matrix(attr)))
+            if result.extinct:
+                if status_queue is not None:
+                    status_queue.put(
+                        (trial_num, f"Trial {trial_num} | All agents died at step {current_sim_step}")
+                    )
+                break
 
-    render_and_save_videos(frames, captures, videos_dir, images_dir, frame_rate)
+            if current_sim_step % frame_save_interval == 0:
+                for attr, writer in writers.items():
+                    writer.write(sim.get_attribute_matrix(attr))
+
+            if current_sim_step in capture_intervals:
+                for attr in captures:
+                    captures[attr].append((current_sim_step, sim.get_attribute_matrix(attr)))
+    finally:
+        for writer in writers.values():
+            writer.close()
+
+    save_capture_images(captures, images_dir)
 
     metrics.close_csv_logging()
 

@@ -1,6 +1,9 @@
+import ctypes
 import json
 import multiprocessing
 import os
+import shutil
+import struct
 import sys
 import time
 
@@ -14,6 +17,35 @@ def _worker_init(py_dir):
     """Add py/ to sys.path in each spawned worker (Windows spawn doesn't inherit it)."""
     if py_dir not in sys.path:
         sys.path.insert(0, py_dir)
+
+
+def _win_get_cursor_row():
+    """Return current cursor row via Windows Console API, or None on failure."""
+    if sys.platform != "win32":
+        return None
+    try:
+        handle = ctypes.windll.kernel32.GetStdHandle(-11)
+        csbi = ctypes.create_string_buffer(22)  # sizeof(CONSOLE_SCREEN_BUFFER_INFO)
+        if ctypes.windll.kernel32.GetConsoleScreenBufferInfo(handle, csbi):
+            # dwCursorPosition (COORD) is at offset 4: two SHORTs (x, y)
+            return struct.unpack_from("hh", csbi.raw, 4)[1]
+    except Exception:
+        pass
+    return None
+
+
+def _win_set_cursor_row(row):
+    """Move cursor to column 0 of the given row via Windows Console API."""
+    try:
+        handle = ctypes.windll.kernel32.GetStdHandle(-11)
+        # COORD packed as DWORD: X in low 16 bits, Y in high 16 bits
+        ctypes.windll.kernel32.SetConsoleCursorPosition(
+            handle, ctypes.c_uint32(row << 16)
+        )
+        return True
+    except Exception:
+        pass
+    return False
 
 
 def run_experiment(config):
@@ -32,16 +64,35 @@ def run_experiment(config):
     status_queue = manager.Queue()
     args = [(trial, unique_results_dir, status_queue, config) for trial in range(1, num_experimental_trials + 1)]
 
-    # Reserve one line per trial
+    trial_statuses = {i: f"Trial {i} | Starting..." for i in range(1, num_experimental_trials + 1)}
+
+    cols = shutil.get_terminal_size(fallback=(220, 24)).columns
+
+    # Record cursor row before printing the trial block so flush_queue can
+    # jump back to the exact row and overwrite in place.
+    start_row = _win_get_cursor_row()  # None on non-Windows
+    if start_row is None:
+        sys.stdout.write("\033[s")  # ANSI save — fallback for non-Windows
+
     for i in range(1, num_experimental_trials + 1):
-        print(f"Trial {i} | Starting...")
+        sys.stdout.write(f"\033[2K{trial_statuses[i]}\n")
     sys.stdout.flush()
 
     def flush_queue():
+        updated = False
         while not status_queue.empty():
             trial_num, message = status_queue.get_nowait()
-            lines_up = num_experimental_trials - trial_num + 1
-            sys.stdout.write(f"\033[{lines_up}A\r\033[2K{message}\033[{lines_up}B")
+            trial_statuses[trial_num] = message
+            updated = True
+        if not updated:
+            return
+        if start_row is not None:
+            _win_set_cursor_row(start_row)
+        else:
+            sys.stdout.write("\033[u")
+        for i in range(1, num_experimental_trials + 1):
+            msg = trial_statuses[i][:cols - 1]
+            sys.stdout.write(f"\033[2K{msg}\n")
         sys.stdout.flush()
 
     # Workers on Windows (spawn) don't inherit sys.path — re-add py/ explicitly.
@@ -58,6 +109,9 @@ def run_experiment(config):
     except KeyboardInterrupt:
         print("\nInterrupted — terminating workers...")
         pool.terminate()
+    except Exception:
+        pool.terminate()
+        raise
     finally:
         pool.join()
     print()

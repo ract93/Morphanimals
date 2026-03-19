@@ -145,8 +145,22 @@ class Environment:
         self.food_matrix[i][j] = (new_food_amount, current_step)
 
     def find_easiest_starting_location(self):
+        n = self.map_size
+        best_pos = None
+        best_neighbors = -1
         for i, row in enumerate(self.world_matrix):
             for j, difficulty in enumerate(row):
-                if difficulty == 1:
-                    return (i, j)
-        return None
+                if difficulty != 1:
+                    continue
+                neighbors = sum(
+                    1 for di in (-1, 0, 1) for dj in (-1, 0, 1)
+                    if (di or dj)
+                    and 0 <= i + di < n and 0 <= j + dj < n
+                    and self.world_matrix[i + di][j + dj] == 1
+                )
+                if neighbors > best_neighbors:
+                    best_neighbors = neighbors
+                    best_pos = (i, j)
+                    if neighbors == 8:
+                        return best_pos
+        return best_pos

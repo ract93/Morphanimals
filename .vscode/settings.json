@@ -7,5 +7,6 @@
     "chat.checkpoints.showFileChanges": true,
     "chat.agent.codeBlockProgress": false,
     "chat.agent.thinking.collapsedTools": "off",
-    "chat.agent.thinking.generateTitles": true
+    "chat.agent.thinking.generateTitles": true,
+    "cmake.sourceDirectory": "D:/Storage/Github/Morphanimals/Evo Island"
 }
