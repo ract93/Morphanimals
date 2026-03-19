@@ -5,14 +5,15 @@ import matplotlib.colors as mcolors
 import numpy as np
 
 
-# Agent Class
 class Agent:
-    common_ancestor_genome = np.array([20, 10, 5, 5, 3])  # common ancestor's genome
+    # Genome: [lifespan, hardiness, strength, metabolism, reproduction_threshold, speed]
+    # speed=0 gives sessile (plant-like) behaviour as the evolutionary baseline.
+    common_ancestor_genome = np.array([20, 10, 5, 5, 3, 0])
 
     def __init__(self):
         self.alive = False
         self.genome = None
-        self.color = None  # Agent color is based on its genome
+        self.color = None
         self.age = 0
         self.energy_reserves = 0
         self.genetic_distance = None
@@ -26,35 +27,33 @@ class Agent:
         live_agent.genome = (
             genome if genome is not None else cls.generate_default_genome()
         )
-        live_agent.color = cls.genome_to_color(live_agent.genome)  # Calculate color
+        live_agent.color = cls.genome_to_color(live_agent.genome)
         live_agent.decode_genome()
-        live_agent.calculate_genetic_distance()  # Calculate genetic distance from ancestor
+        live_agent.calculate_genetic_distance()
         live_agent.energy_reserves = 5
         return live_agent
 
     def decode_genome(self):
-        # Explicit mapping of genome indices to traits for clarity
         if self.genome is not None:
             self.lifespan = self.genome[0]
             self.hardiness = self.genome[1]
             self.strength = self.genome[2]
             self.metabolism = self.genome[3]
             self.reproduction_threshold = self.genome[4]
+            self.speed = self.genome[5]
 
     @staticmethod
     def generate_default_genome():
-        # Return the default genome, which could be the common ancestor's genome
         return Agent.common_ancestor_genome.copy()
 
     @staticmethod
     def mutate_genome(genome, mutation_rate):
+        """Per-gene Gaussian mutations, clamped to [0, 100]."""
         mutation_effects = np.zeros_like(genome)
         for i in range(len(genome)):
             if np.random.rand() < mutation_rate:
                 mutation_effects[i] = np.random.normal(loc=0, scale=2)
-        mutated_genome = genome + mutation_effects
-        mutated_genome = np.clip(mutated_genome, 0, 100)
-        return mutated_genome
+        return np.clip(genome + mutation_effects, 0, 100)
 
     def calculate_genetic_distance(self, other_genome=None):
         if other_genome is None:
@@ -69,6 +68,7 @@ class Agent:
         return cls.create_live_agent(child_genome)
 
     def age_agent(self, enable_aging):
+        """Logistic death curve centred at lifespan/2."""
         self.age += 1
         if enable_aging:
             midpoint = self.lifespan / 2
@@ -79,7 +79,6 @@ class Agent:
             death_probability = 1 / (
                 1 + math.exp(-steepness * (self.age - midpoint) / midpoint)
             )
-
             if random.random() < death_probability:
                 self.kill_agent()
 
@@ -97,25 +96,28 @@ class Agent:
         self.strength = 0
         self.metabolism = 0
         self.reproduction_threshold = 0
+        self.speed = 0
         self.genetic_distance = 0
         self.species = 0
 
     def kill_agent(self):
         self.alive = False
         self.genome = None
-        self.color = None  # Reset color attribute
+        self.color = None
         self.reset_traits()
 
     @staticmethod
     def genome_to_color(genome):
-        """ Convert a genome to a color in HSL space """
-        # Normalize genome values to [0, 1] range
+        """Map genome to RGB via HSV. Related genomes share hues for visual ID.
+
+        Normalises values relative to the genome's own min/max so colour
+        encodes internal shape rather than absolute scale.
+        """
         genome_range = np.max(genome) - np.min(genome)
         norm_genome = (genome - np.min(genome)) / (genome_range if genome_range != 0 else 1)
 
-        # Map normalized values to HSL space
-        hue = (norm_genome[0] * 360) % 360
-        saturation = 50 + norm_genome[1] * 50  # Keep saturation between 50% and 100%
-        lightness = 50 + norm_genome[2] * 50   # Keep lightness between 50% and 100%
+        hue        = (norm_genome[0] * 360) % 360
+        saturation = 50 + norm_genome[1] * 50  # [50%, 100%] — avoids washed-out greys
+        lightness  = 50 + norm_genome[2] * 50  # [50%, 100%] — avoids black cells
 
         return mcolors.hsv_to_rgb((hue / 360, saturation / 100, lightness / 100))

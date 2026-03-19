@@ -14,7 +14,7 @@ except ImportError:
     _CPP_AVAILABLE = False
 
 
-# Kept for backward compatibility — not used by run_game anymore.
+# Kept for backward compatibility — not called by run_game anymore.
 def is_coordinate_in_range(n, x, y):
     if x < 0 or x >= n:
         return False
@@ -24,11 +24,23 @@ def is_coordinate_in_range(n, x, y):
 
 
 def initialize_agent_matrix(n):
+    """Create an N×N grid of dead Agent placeholders."""
     from agent import Agent
     return [[Agent() for j in range(n)] for i in range(n)]
 
 
 def run_game(trial_num, unique_results_dir, status_queue, cfg):
+    """Run a single simulation trial and write all outputs to trial_dir.
+
+    Delegates the hot-path step loop to the C++ evo_core extension. Python
+    handles I/O, frame rendering, and metric logging around each C++ step call.
+
+    Args:
+        trial_num:          1-based trial index, used for directory naming.
+        unique_results_dir: Root results directory for this experiment run.
+        status_queue:       Multiprocessing queue for live console status updates.
+        cfg:                Config dict loaded from config.json.
+    """
     if not _CPP_AVAILABLE:
         raise RuntimeError(
             "evo_core C++ extension not built.\n"
@@ -38,6 +50,7 @@ def run_game(trial_num, unique_results_dir, status_queue, cfg):
     trial_dir = os.path.join(unique_results_dir, f"Trial_{trial_num}")
     os.makedirs(trial_dir, exist_ok=True)
 
+    # Set up CSV metric logging for this trial
     metrics = SimulationMetrics()
     csv_file_path = os.path.join(trial_dir, "simulation_metrics.csv")
     metrics.enable_csv_logging(csv_file_path)
@@ -46,7 +59,7 @@ def run_game(trial_num, unique_results_dir, status_queue, cfg):
     frame_save_interval = cfg["frame_save_interval"]
     frame_rate          = cfg["frame_rate"]
 
-    # Map generation stays in Python (Environment unchanged)
+    # Map generation stays in Python; the resulting matrices are passed to C++
     environment = Environment(cfg)
     save_matrix_image(environment.world_matrix, os.path.join(trial_dir, "Game_World"))
 
@@ -54,12 +67,12 @@ def run_game(trial_num, unique_results_dir, status_queue, cfg):
     if start_pos is None:
         start_pos = (0, 0)
 
-    # Normalise world_matrix to a plain list (perlin maps are numpy arrays)
+    # Perlin maps are numpy arrays; convert to plain lists for pybind11 ingestion
     wm = environment.world_matrix
     if hasattr(wm, "tolist"):
         wm = wm.tolist()
 
-    # Hand terrain + food matrices to the C++ simulation core
+    # Hand terrain and food grid to the C++ simulation core
     sim = _CppSimulation(
         cfg,
         wm,
@@ -73,6 +86,7 @@ def run_game(trial_num, unique_results_dir, status_queue, cfg):
     os.makedirs(videos_dir, exist_ok=True)
     os.makedirs(images_dir, exist_ok=True)
 
+    # Evenly-spaced steps at which to save a full-resolution image capture
     capture_intervals = [
         simulation_steps // 8,
         2 * simulation_steps // 8,
@@ -84,8 +98,9 @@ def run_game(trial_num, unique_results_dir, status_queue, cfg):
         simulation_steps,
     ]
 
+    # Attributes rendered as video layers and image captures
     attrs = ["strength", "hardiness", "age", "lifespan",
-             "metabolism", "reproduction_threshold", "genetic_distance", "color"]
+             "metabolism", "reproduction_threshold", "speed", "genetic_distance", "color"]
     writers  = open_frame_writers(videos_dir, frame_rate)
     captures = {attr: [] for attr in attrs}
 
@@ -93,9 +108,10 @@ def run_game(trial_num, unique_results_dir, status_queue, cfg):
 
     try:
         while current_sim_step < simulation_steps:
+            # Advance the C++ simulation by one step
             result = sim.step(current_sim_step)
 
-            # Accumulate cumulative death counters from per-step deltas
+            # Accumulate death deltas from this step into running totals
             metrics.deaths_from_aging      += result.deaths_aging
             metrics.death_from_competition += result.deaths_competition
             metrics.deaths_from_starvation += result.deaths_starvation
@@ -105,7 +121,7 @@ def run_game(trial_num, unique_results_dir, status_queue, cfg):
                 result.deaths_starvation + result.deaths_exposure
             )
 
-            # Per-step totals for average calculation (reset by reset_averages)
+            # Copy absolute per-step totals (used to compute averages)
             metrics.population_count                 = result.population_count
             metrics.species_counts                   = result.species_counts
             metrics.total_age                        = result.total_age
@@ -114,6 +130,7 @@ def run_game(trial_num, unique_results_dir, status_queue, cfg):
             metrics.total_hardiness                  = result.total_hardiness
             metrics.total_metabolism                 = result.total_metabolism
             metrics.total_reproduction_threshold     = result.total_reproduction_threshold
+            metrics.total_speed                      = result.total_speed
 
             metrics.calculate_averages()
             metrics.log_metrics(current_sim_step)
@@ -132,10 +149,12 @@ def run_game(trial_num, unique_results_dir, status_queue, cfg):
                     )
                 break
 
+            # Write video frames at the configured interval
             if current_sim_step % frame_save_interval == 0:
                 for attr, writer in writers.items():
                     writer.write(sim.get_attribute_matrix(attr))
 
+            # Save full-resolution image captures at evenly-spaced checkpoints
             if current_sim_step in capture_intervals:
                 for attr in captures:
                     captures[attr].append((current_sim_step, sim.get_attribute_matrix(attr)))
@@ -144,9 +163,9 @@ def run_game(trial_num, unique_results_dir, status_queue, cfg):
             writer.close()
 
     save_capture_images(captures, images_dir)
-
     metrics.close_csv_logging()
 
+    # Save a copy of the config used for this trial alongside its outputs
     with open(os.path.join(trial_dir, "config.json"), "w") as f:
         json.dump(cfg, f)
 

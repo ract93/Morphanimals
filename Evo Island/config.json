@@ -1,19 +1,32 @@
 {
     "experimental_trials": 1,
-    "map_size": 3000,
     "simulation_steps": 10000,
+
+    "map_size": 3000,
     "map_type": "perlin",
-    "use_random_perlin_params": false, 
+    "use_random_perlin_params": false,
     "use_rivers": true,
-    "enable_violence": true,
+
     "enable_aging": true,
     "enable_food": true,
+    "enable_violence": true,
     "enable_reproduction_threshold": true,
+    "enable_movement": true,
+
+    "longevity_cost": 0.05,
+    "armor_cost": 0.04,
+    "strength_cost": 0.10,
+    "metabolism_extraction_factor": 2.0,
+    "strength_repro_factor": 0.2,
+    "movement_cost": 0.1,
+
     "food_generation_rate": 4,
-    "initial_food": 50,
+    "initial_food": 15,
     "max_food_capacity": 50,
-    "speciation_threshold": 10,
+
     "mutation_rate": 0.034,
+    "speciation_threshold": 10,
+
     "frame_save_interval": 3,
     "frame_rate": 30
 }
