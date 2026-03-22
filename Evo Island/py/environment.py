@@ -114,29 +114,6 @@ class Environment:
             for _ in range(self.map_size)
         ]
 
-    def calculate_food_available(self, i, j, current_step):
-        """Compute available food, accounting for regeneration since last access.
-
-        Note: the C++ core has its own equivalent. This is kept for Python tooling.
-        """
-        food_generation_rate = self.config["food_generation_rate"]
-        max_food_capacity    = self.config["max_food_capacity"]
-
-        previous_food_amount, last_accessed = self.food_matrix[i][j]
-        if last_accessed == -1:
-            food_produced = current_step * food_generation_rate
-        else:
-            food_produced = (current_step - last_accessed) * food_generation_rate
-
-        new_food_amount = min(previous_food_amount + food_produced, max_food_capacity)
-        self.food_matrix[i][j] = (new_food_amount, current_step)
-        return new_food_amount
-
-    def update_food_matrix(self, i, j, current_step, food_consumed):
-        previous_food_amount, _last_accessed = self.food_matrix[i][j]
-        new_food_amount = max(previous_food_amount - food_consumed, 0)
-        self.food_matrix[i][j] = (new_food_amount, current_step)
-
     def find_easiest_starting_location(self):
         """Return the level-1 cell with the most level-1 neighbours.
 

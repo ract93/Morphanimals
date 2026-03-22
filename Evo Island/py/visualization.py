@@ -5,19 +5,7 @@ import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
 
-
-_VIDEO_SPECS = [
-    ("strength",               "viridis", 0,   100, "strength_map.mp4"),
-    ("hardiness",              "viridis", 0,   100, "hardiness_map.mp4"),
-    ("age",                    "viridis", 0,    50, "age_map.mp4"),
-    ("lifespan",               "inferno", 0,   100, "lifespan_map.mp4"),
-    ("metabolism",             "inferno", 0,   100, "metabolism_map.mp4"),
-    ("reproduction_threshold", "magma",   0,    50, "reproduction_threshold_map.mp4"),
-    ("speed",                  "plasma",  0,    20, "speed_map.mp4"),
-    ("trophism",               "RdYlGn_r", 0,    1, "trophism_map.mp4"),
-    ("genetic_distance",       "magma",   0,    50, "genetic_drift_map.mp4"),
-    ("color",                  None,      None, None, "species_map.mp4"),
-]
+from genes import VIDEO_SPECS
 
 
 def _to_rgb(raw, cmap_name, vmin, vmax):
@@ -57,13 +45,13 @@ def open_frame_writers(videos_dir, frame_rate):
     """Open one streaming FrameWriter per attribute. Call writer.close() when done."""
     return {
         attr: FrameWriter(os.path.join(videos_dir, fname), frame_rate, cmap, vmin, vmax)
-        for attr, cmap, vmin, vmax, fname in _VIDEO_SPECS
+        for attr, cmap, vmin, vmax, fname in VIDEO_SPECS
     }
 
 
 def save_capture_images(captures, images_dir):
     """Write PNG snapshots from the captures dict {attr: [(step, raw), ...]}."""
-    for attr, cmap_name, vmin, vmax, _ in _VIDEO_SPECS:
+    for attr, cmap_name, vmin, vmax, _ in VIDEO_SPECS:
         for step, raw in captures.get(attr, []):
             imageio.imwrite(
                 os.path.join(images_dir, f"{attr}_step_{step}.png"),

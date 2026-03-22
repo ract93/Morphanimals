@@ -1,9 +1,8 @@
 import json
 import os
 
-import numpy as np
-
 from environment import Environment
+from genes import GENES, VIDEO_SPECS
 from metrics import SimulationMetrics
 from visualization import open_frame_writers, save_capture_images, save_matrix_image
 
@@ -13,20 +12,6 @@ try:
 except ImportError:
     _CPP_AVAILABLE = False
 
-
-# Kept for backward compatibility — not called by run_game anymore.
-def is_coordinate_in_range(n, x, y):
-    if x < 0 or x >= n:
-        return False
-    if y < 0 or y >= n:
-        return False
-    return True
-
-
-def initialize_agent_matrix(n):
-    """Create an N×N grid of dead Agent placeholders."""
-    from agent import Agent
-    return [[Agent() for j in range(n)] for i in range(n)]
 
 
 def run_game(trial_num, unique_results_dir, status_queue, cfg):
@@ -98,9 +83,8 @@ def run_game(trial_num, unique_results_dir, status_queue, cfg):
         simulation_steps,
     ]
 
-    # Attributes rendered as video layers and image captures
-    attrs = ["strength", "hardiness", "age", "lifespan",
-             "metabolism", "reproduction_threshold", "speed", "trophism", "genetic_distance", "color"]
+    # Attributes rendered as video layers and image captures — derived from genes registry
+    attrs = [name for name, *_ in VIDEO_SPECS]
     writers  = open_frame_writers(videos_dir, frame_rate)
     captures = {attr: [] for attr in attrs}
 
@@ -124,16 +108,11 @@ def run_game(trial_num, unique_results_dir, status_queue, cfg):
             )
 
             # Copy absolute per-step totals (used to compute averages)
-            metrics.population_count                 = result.population_count
-            metrics.species_counts                   = result.species_counts
-            metrics.total_age                        = result.total_age
-            metrics.total_lifespan                   = result.total_lifespan
-            metrics.total_strength                   = result.total_strength
-            metrics.total_hardiness                  = result.total_hardiness
-            metrics.total_metabolism                 = result.total_metabolism
-            metrics.total_reproduction_threshold     = result.total_reproduction_threshold
-            metrics.total_speed                      = result.total_speed
-            metrics.total_trophism                   = result.total_trophism
+            metrics.population_count = result.population_count
+            metrics.species_counts   = result.species_counts
+            metrics.total_age        = result.total_age
+            for attr, *_ in GENES:
+                setattr(metrics, f"total_{attr}", getattr(result, f"total_{attr}"))
 
             metrics.calculate_averages()
             metrics.log_metrics(current_sim_step)

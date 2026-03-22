@@ -29,6 +29,8 @@ struct StepResult {
     double total_reproduction_threshold = 0.0;
     double total_speed         = 0.0;
     double total_trophism      = 0.0;
+    double total_kin_attraction  = 0.0;
+    double total_threat_response = 0.0;
 };
 
 // One Simulation instance per trial. Owns the agent grid, food grid, and terrain.
@@ -68,6 +70,7 @@ private:
     bool  enable_space_competition;
     bool  enable_movement;
     bool  enable_predation;
+    bool  enable_sociality;
 
     // Agent hardiness must strictly exceed this value to survive a given terrain level.
     static constexpr int LEVEL_DIFF[6] = {0, 1, 10, 20, 40, 50};
@@ -83,6 +86,7 @@ private:
     float predation_resistance;          // prey.strength dampens steal: steal /= (1 + strength * resistance)
     float predation_threshold;           // min trophism_diff for a collision to resolve as predation vs competition
     float trophism_cost;                 // energy/step per unit of trophism (predatory apparatus upkeep)
+    float sociality_cost;                // energy/step per unit of |sociality| (sensing + signalling overhead)
 
     inline Agent&       at(int i, int j)       { return agents[i*N+j]; }
     inline const Agent& at(int i, int j) const { return agents[i*N+j]; }

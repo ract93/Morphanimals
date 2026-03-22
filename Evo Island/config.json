@@ -13,6 +13,7 @@
     "enable_reproduction_threshold": true,
     "enable_movement": true,
     "enable_predation": true,
+    "enable_sociality": true,
 
     "longevity_cost": 0.05,
     "armor_cost": 0.04,
@@ -24,6 +25,7 @@
     "predation_resistance": 0.02,
     "predation_threshold": 0.3,
     "trophism_cost": 0.05,
+    "sociality_cost": 0.02,
 
     "food_generation_rate": 4,
     "initial_food": 15,

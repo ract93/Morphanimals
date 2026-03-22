@@ -24,7 +24,9 @@ PYBIND11_MODULE(evo_core, m) {
         .def_readonly("total_metabolism",             &StepResult::total_metabolism)
         .def_readonly("total_reproduction_threshold", &StepResult::total_reproduction_threshold)
         .def_readonly("total_speed",                  &StepResult::total_speed)
-        .def_readonly("total_trophism",               &StepResult::total_trophism);
+        .def_readonly("total_trophism",               &StepResult::total_trophism)
+        .def_readonly("total_kin_attraction",          &StepResult::total_kin_attraction)
+        .def_readonly("total_threat_response",        &StepResult::total_threat_response);
 
     py::class_<Simulation>(m, "Simulation")
         .def(py::init<py::dict, py::list, py::list, int, int>(),

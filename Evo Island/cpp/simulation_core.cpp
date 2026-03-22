@@ -31,8 +31,9 @@ Simulation::Simulation(py::dict cfg,
     enable_repro_thresh  = cfg["enable_reproduction_threshold"].cast<bool>();
     enable_space_competition      = cfg["enable_space_competition"].cast<bool>();
     // New flags default to off so old configs remain unchanged
-    enable_movement  = cfg.contains("enable_movement")  ? cfg["enable_movement"].cast<bool>()  : false;
-    enable_predation = cfg.contains("enable_predation") ? cfg["enable_predation"].cast<bool>() : false;
+    enable_movement   = cfg.contains("enable_movement")   ? cfg["enable_movement"].cast<bool>()   : false;
+    enable_predation  = cfg.contains("enable_predation")  ? cfg["enable_predation"].cast<bool>()  : false;
+    enable_sociality  = cfg.contains("enable_sociality")  ? cfg["enable_sociality"].cast<bool>()  : false;
 
     // Trade-off costs default to 0 / large-cap so old configs run unchanged
     longevity_cost               = cfg.contains("longevity_cost")               ? cfg["longevity_cost"].cast<float>()               : 0.0f;
@@ -45,6 +46,7 @@ Simulation::Simulation(py::dict cfg,
     predation_resistance         = cfg.contains("predation_resistance")         ? cfg["predation_resistance"].cast<float>()         : 0.02f;
     predation_threshold          = cfg.contains("predation_threshold")          ? cfg["predation_threshold"].cast<float>()          : 0.3f;
     trophism_cost                = cfg.contains("trophism_cost")                ? cfg["trophism_cost"].cast<float>()                : 0.0f;
+    sociality_cost               = cfg.contains("sociality_cost")               ? cfg["sociality_cost"].cast<float>()               : 0.0f;
 
     agents.resize(N * N);
     world .resize(N * N);
@@ -274,8 +276,9 @@ void Simulation::step_agent(int i, int j, int current_step, StepResult& res) {
                           + a.lifespan  * longevity_cost
                           + a.hardiness * armor_cost
                           + a.strength  * strength_cost
-                          + (enable_movement  ? a.speed    * movement_cost  : 0.0f)
-                          + (enable_predation ? a.trophism * trophism_cost  : 0.0f);
+                          + (enable_movement  ? a.speed                * movement_cost  : 0.0f)
+                          + (enable_predation ? a.trophism             * trophism_cost  : 0.0f)
+                          + (enable_sociality ? (std::abs(a.kin_attraction) + std::abs(a.threat_response)) * sociality_cost : 0.0f);
         a.metabolize(maintenance);
 
         if (a.energy_reserves <= 0.0f) {
@@ -295,11 +298,68 @@ void Simulation::step_agent(int i, int j, int current_step, StepResult& res) {
 
     // ── 4. Movement ───────────────────────────────────────────────────────────
     if (enable_movement && a.speed >= 1.0f) {
+        // ── Social force ─────────────────────────────────────────────────────
+        // Scan immediate Moore neighbours once before the walk. Build a 2D force
+        // vector: each live neighbour contributes a pull scaled by:
+        //   target_weight = (1-selectivity)*similarity + selectivity*(1-similarity)
+        // where similarity = 1 - genome_dist/speciation_threshold, clamped [0,1].
+        // sociality > 0 attracts, < 0 repels — sign is already in the force.
+        // At each step, with probability |sociality| we prefer the direction
+        // most aligned with the force; otherwise we roll uniformly.
+        // ── Social force ─────────────────────────────────────────────────────
+        // Each live neighbour contributes a pull:
+        //   trophism_diff = self.trophism - neighbour.trophism  ∈ [-1, 1]
+        //   pull = kin_attraction * similarity + threat_response * trophism_diff
+        // trophism_diff > 0 → neighbour is more autotrophic (prey-like relative to self).
+        // trophism_diff < 0 → neighbour is more predatory (threat to self).
+        // threat_response > 0 naturally encodes both prey pursuit AND predator avoidance
+        // because trophism_diff carries the sign.
+        // pull > 0 → attract; pull < 0 → repel.
+        // With probability max(|kin_attraction|, |threat_response|) we pick the
+        // direction most aligned with the net force; otherwise random walk.
+        float force_i = 0.0f, force_j = 0.0f;
+        if (enable_sociality && (a.kin_attraction != 0.0f || a.threat_response != 0.0f)) {
+            for (int d = 1; d <= 8; ++d) {
+                int ni = i + OFFSETS[d][0];
+                int nj = j + OFFSETS[d][1];
+                if (!in_range(ni, nj)) continue;
+                const Agent& nb = at(ni, nj);
+                if (!nb.alive) continue;
+
+                float gdist = 0.0f;
+                for (int k = 0; k < 9; ++k) {
+                    float diff = a.genome[k] - nb.genome[k];
+                    gdist += diff * diff;
+                }
+                gdist = std::sqrt(gdist);
+                float similarity = std::max(0.0f, 1.0f - gdist / (speciation_threshold * 3.0f));
+                float trophism_diff = a.trophism - nb.trophism;
+                float pull = a.kin_attraction  * similarity
+                           + a.threat_response * trophism_diff;
+                force_i += OFFSETS[d][0] * pull;
+                force_j += OFFSETS[d][1] * pull;
+            }
+        }
+
         std::uniform_int_distribution<int> move_dice(1, 8);
+        std::uniform_real_distribution<float> bias_roll(0.0f, 1.0f);
         int ci = i, cj = j;
         int steps = static_cast<int>(std::min(a.speed, 20.0f));
         for (int s = 0; s < steps; ++s) {
-            int roll = move_dice(rng);
+            int roll;
+            float social_strength = std::max(std::abs(a.kin_attraction), std::abs(a.threat_response));
+            if ((force_i != 0.0f || force_j != 0.0f) &&
+                bias_roll(rng) < social_strength) {
+                int best = 1;
+                float best_dot = -1e9f;
+                for (int d = 1; d <= 8; ++d) {
+                    float dot = OFFSETS[d][0] * force_i + OFFSETS[d][1] * force_j;
+                    if (dot > best_dot) { best_dot = dot; best = d; }
+                }
+                roll = best;
+            } else {
+                roll = move_dice(rng);
+            }
             int ni = ci + OFFSETS[roll][0];
             int nj = cj + OFFSETS[roll][1];
             if (!in_range(ni, nj)) continue;
@@ -366,7 +426,7 @@ void Simulation::step_agent(int i, int j, int current_step, StepResult& res) {
 
 // Greedy nearest-representative clustering in 7D genome space.
 void Simulation::classify_species() {
-    std::vector<std::array<float,7>> rep_genomes;
+    std::vector<std::array<float,9>> rep_genomes;
     std::vector<int>                 rep_labels;
     int species_counter = 1;
 
@@ -380,7 +440,7 @@ void Simulation::classify_species() {
             int   best_idx  = -1;
             for (int s = 0; s < static_cast<int>(rep_genomes.size()); ++s) {
                 float d = 0.0f;
-                for (int k = 0; k < 7; ++k) {
+                for (int k = 0; k < 9; ++k) {
                     float diff = a.genome[k] - rep_genomes[s][k];
                     d += diff * diff;
                 }
@@ -395,8 +455,8 @@ void Simulation::classify_species() {
 
         if (!assigned) {
             a.species = species_counter;
-            std::array<float,7> g;
-            for (int k = 0; k < 7; ++k) g[k] = a.genome[k];
+            std::array<float,9> g;
+            for (int k = 0; k < 9; ++k) g[k] = a.genome[k];
             rep_genomes.push_back(g);
             rep_labels .push_back(species_counter);
             ++species_counter;
@@ -419,6 +479,8 @@ void Simulation::collect_metrics(StepResult& res) const {
         res.total_reproduction_threshold += a.reproduction_threshold;
         res.total_speed        += a.speed;
         res.total_trophism     += a.trophism;
+        res.total_kin_attraction  += a.kin_attraction;
+        res.total_threat_response += a.threat_response;
         ++res.population_count;
         species_set.insert(a.species);
     }
@@ -494,6 +556,8 @@ py::array_t<float> Simulation::get_attribute_matrix(const std::string& attr) con
                 else if (attr == "reproduction_threshold") val = a.reproduction_threshold;
                 else if (attr == "speed")                  val = a.speed;
                 else if (attr == "trophism")               val = a.trophism;
+                else if (attr == "kin_attraction")         val = a.kin_attraction;
+                else if (attr == "threat_response")        val = a.threat_response;
                 else if (attr == "genetic_distance")       val = a.genetic_distance;
             }
             buf(i, j) = val;

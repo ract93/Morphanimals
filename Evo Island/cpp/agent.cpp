@@ -8,15 +8,14 @@ void Agent::decode_genome() {
     metabolism             = genome[3];
     reproduction_threshold = genome[4];
     speed                  = genome[5];
-    // genome[6] is stored in [0,100]; decode to [0,1] trophism fraction.
-    // 0 = pure autotroph (feeds only from environment).
-    // 1 = pure heterotroph (feeds only by predating neighbours).
-    trophism = genome[6] / 100.0f;
+    trophism        = genome[6] / 100.0f;           // [0,100] → [0,1]
+    kin_attraction  = (genome[7] - 50.0f) / 50.0f; // [0,100] → [-1,1]
+    threat_response = (genome[8] - 50.0f) / 50.0f; // [0,100] → [-1,1]
 }
 
 void Agent::calculate_genetic_distance() {
     float sum = 0.0f;
-    for (int i = 0; i < 7; ++i) {
+    for (int i = 0; i < 9; ++i) {
         float d = genome[i] - ANCESTOR[i];
         sum += d * d;
     }
@@ -24,20 +23,22 @@ void Agent::calculate_genetic_distance() {
 }
 
 void Agent::kill() {
-    alive                = false;
-    age                  = 0.0f;
-    energy_reserves      = 0.0f;
-    genetic_distance     = 0.0f;
-    species              = 0;
-    last_step_acted      = -1;
-    lifespan             = 0.0f;
-    hardiness            = 0.0f;
-    strength             = 0.0f;
-    metabolism           = 0.0f;
+    alive                  = false;
+    age                    = 0.0f;
+    energy_reserves        = 0.0f;
+    genetic_distance       = 0.0f;
+    species                = 0;
+    last_step_acted        = -1;
+    lifespan               = 0.0f;
+    hardiness              = 0.0f;
+    strength               = 0.0f;
+    metabolism             = 0.0f;
     reproduction_threshold = 0.0f;
-    speed                = 0.0f;
-    trophism             = 0.0f;
-    for (int i = 0; i < 7; ++i) genome[i] = 0.0f;
+    speed                  = 0.0f;
+    trophism        = 0.0f;
+    kin_attraction  = 0.0f;
+    threat_response = 0.0f;
+    for (int i = 0; i < 9; ++i) genome[i] = 0.0f;
     for (int i = 0; i < 3; ++i) color[i]  = 0.0f;
 }
 
@@ -62,18 +63,18 @@ void Agent::age_step(bool enable_aging, std::mt19937& rng) {
 void Agent::consume_food(float f) { energy_reserves += f; }
 void Agent::metabolize(float e)   { energy_reserves -= e; }
 
-// Normalise all 7 gene values relative to the genome's own min/max, then map
+// Normalise all 9 gene values relative to the genome's own min/max, then map
 // index-0 → hue, index-1 → saturation, index-2 → value. Agents with similar
 // genomes share similar hues, making species clusters visually identifiable.
-void Agent::genome_to_color(const float g[7], float c[3]) {
+void Agent::genome_to_color(const float g[9], float c[3]) {
     float gmin = g[0], gmax = g[0];
-    for (int i = 1; i < 7; ++i) {
+    for (int i = 1; i < 9; ++i) {
         if (g[i] < gmin) gmin = g[i];
         if (g[i] > gmax) gmax = g[i];
     }
     float range = (gmax != gmin) ? (gmax - gmin) : 1.0f;
-    float norm[7];
-    for (int i = 0; i < 7; ++i)
+    float norm[9];
+    for (int i = 0; i < 9; ++i)
         norm[i] = (g[i] - gmin) / range;
 
     float H = norm[0];
@@ -97,10 +98,10 @@ void Agent::genome_to_color(const float g[7], float c[3]) {
     }
 }
 
-Agent Agent::create_live(const float g[7]) {
+Agent Agent::create_live(const float g[9]) {
     Agent a;
     a.alive = true;
-    for (int i = 0; i < 7; ++i) a.genome[i] = g[i];
+    for (int i = 0; i < 9; ++i) a.genome[i] = g[i];
     genome_to_color(a.genome, a.color);
     a.decode_genome();
     a.calculate_genetic_distance();
@@ -114,11 +115,11 @@ Agent Agent::create_live_default() {
 
 // Each gene mutates independently with probability mutation_rate;
 // effect is sampled from N(0, 2) and clamped to [0, 100].
-void Agent::mutate_genome(const float in[7], float out[7],
+void Agent::mutate_genome(const float in[9], float out[9],
                           float mutation_rate, std::mt19937& rng) {
     std::uniform_real_distribution<float> uni(0.0f, 1.0f);
     std::normal_distribution<float>       norm_dist(0.0f, 2.0f);
-    for (int i = 0; i < 7; ++i) {
+    for (int i = 0; i < 9; ++i) {
         float effect = (uni(rng) < mutation_rate) ? norm_dist(rng) : 0.0f;
         out[i] = std::min(100.0f, std::max(0.0f, in[i] + effect));
     }
@@ -126,7 +127,7 @@ void Agent::mutate_genome(const float in[7], float out[7],
 
 Agent Agent::reproduce_asexually(const Agent& parent,
                                   float mutation_rate, std::mt19937& rng) {
-    float child_genome[7];
+    float child_genome[9];
     mutate_genome(parent.genome, child_genome, mutation_rate, rng);
     return create_live(child_genome);
 }
