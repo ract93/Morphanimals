@@ -100,7 +100,7 @@ def run_game(trial_num, unique_results_dir, status_queue, cfg):
 
     # Attributes rendered as video layers and image captures
     attrs = ["strength", "hardiness", "age", "lifespan",
-             "metabolism", "reproduction_threshold", "speed", "genetic_distance", "color"]
+             "metabolism", "reproduction_threshold", "speed", "trophism", "genetic_distance", "color"]
     writers  = open_frame_writers(videos_dir, frame_rate)
     captures = {attr: [] for attr in attrs}
 
@@ -116,9 +116,11 @@ def run_game(trial_num, unique_results_dir, status_queue, cfg):
             metrics.death_from_competition += result.deaths_competition
             metrics.deaths_from_starvation += result.deaths_starvation
             metrics.deaths_from_exposure   += result.deaths_exposure
+            metrics.deaths_from_predation  += result.deaths_predation
             metrics.cumulative_deaths      += (
                 result.deaths_aging + result.deaths_competition +
-                result.deaths_starvation + result.deaths_exposure
+                result.deaths_starvation + result.deaths_exposure +
+                result.deaths_predation
             )
 
             # Copy absolute per-step totals (used to compute averages)
@@ -131,22 +133,25 @@ def run_game(trial_num, unique_results_dir, status_queue, cfg):
             metrics.total_metabolism                 = result.total_metabolism
             metrics.total_reproduction_threshold     = result.total_reproduction_threshold
             metrics.total_speed                      = result.total_speed
+            metrics.total_trophism                   = result.total_trophism
 
             metrics.calculate_averages()
             metrics.log_metrics(current_sim_step)
+            state_str = metrics.get_state_string(trial_num, current_sim_step, simulation_steps)
             if status_queue is not None:
-                status_queue.put(
-                    (trial_num, metrics.get_state_string(trial_num, current_sim_step, simulation_steps))
-                )
+                status_queue.put((trial_num, state_str))
+            else:
+                print(f"\r{state_str}", end="", flush=True)
             metrics.reset_averages()
 
             current_sim_step += 1
 
             if result.extinct:
+                extinct_str = f"Trial {trial_num} | All agents died at step {current_sim_step}"
                 if status_queue is not None:
-                    status_queue.put(
-                        (trial_num, f"Trial {trial_num} | All agents died at step {current_sim_step}")
-                    )
+                    status_queue.put((trial_num, extinct_str))
+                else:
+                    print(f"\n{extinct_str}")
                 break
 
             # Write video frames at the configured interval
@@ -169,5 +174,8 @@ def run_game(trial_num, unique_results_dir, status_queue, cfg):
     with open(os.path.join(trial_dir, "config.json"), "w") as f:
         json.dump(cfg, f)
 
+    done_str = f"Trial {trial_num} | Done"
     if status_queue is not None:
-        status_queue.put((trial_num, f"Trial {trial_num} | Done"))
+        status_queue.put((trial_num, done_str))
+    else:
+        print(f"\n{done_str}")

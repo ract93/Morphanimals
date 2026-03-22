@@ -16,13 +16,15 @@ PYBIND11_MODULE(evo_core, m) {
         .def_readonly("deaths_competition",           &StepResult::deaths_competition)
         .def_readonly("deaths_starvation",            &StepResult::deaths_starvation)
         .def_readonly("deaths_exposure",              &StepResult::deaths_exposure)
+        .def_readonly("deaths_predation",             &StepResult::deaths_predation)
         .def_readonly("total_age",                    &StepResult::total_age)
         .def_readonly("total_lifespan",               &StepResult::total_lifespan)
         .def_readonly("total_strength",               &StepResult::total_strength)
         .def_readonly("total_hardiness",              &StepResult::total_hardiness)
         .def_readonly("total_metabolism",             &StepResult::total_metabolism)
         .def_readonly("total_reproduction_threshold", &StepResult::total_reproduction_threshold)
-        .def_readonly("total_speed",                  &StepResult::total_speed);
+        .def_readonly("total_speed",                  &StepResult::total_speed)
+        .def_readonly("total_trophism",               &StepResult::total_trophism);
 
     py::class_<Simulation>(m, "Simulation")
         .def(py::init<py::dict, py::list, py::list, int, int>(),

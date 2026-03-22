@@ -6,9 +6,10 @@ import numpy as np
 
 
 class Agent:
-    # Genome: [lifespan, hardiness, strength, metabolism, reproduction_threshold, speed]
-    # speed=0 gives sessile (plant-like) behaviour as the evolutionary baseline.
-    common_ancestor_genome = np.array([20, 10, 5, 5, 3, 0])
+    # Genome: [lifespan, hardiness, strength, metabolism, reproduction_threshold, speed, trophism]
+    # trophism stored in [0, 100], decoded to [0, 1]: 0=autotroph, 1=heterotroph.
+    # Ancestor starts at trophism=0 — pure plant-like baseline.
+    common_ancestor_genome = np.array([20, 10, 5, 5, 3, 0, 0])
 
     def __init__(self):
         self.alive = False
@@ -41,6 +42,7 @@ class Agent:
             self.metabolism = self.genome[3]
             self.reproduction_threshold = self.genome[4]
             self.speed = self.genome[5]
+            self.trophism = self.genome[6] / 100.0
 
     @staticmethod
     def generate_default_genome():
@@ -97,6 +99,7 @@ class Agent:
         self.metabolism = 0
         self.reproduction_threshold = 0
         self.speed = 0
+        self.trophism = 0
         self.genetic_distance = 0
         self.species = 0
 

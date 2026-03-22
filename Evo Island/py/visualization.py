@@ -14,6 +14,7 @@ _VIDEO_SPECS = [
     ("metabolism",             "inferno", 0,   100, "metabolism_map.mp4"),
     ("reproduction_threshold", "magma",   0,    50, "reproduction_threshold_map.mp4"),
     ("speed",                  "plasma",  0,    20, "speed_map.mp4"),
+    ("trophism",               "RdYlGn_r", 0,    1, "trophism_map.mp4"),
     ("genetic_distance",       "magma",   0,    50, "genetic_drift_map.mp4"),
     ("color",                  None,      None, None, "species_map.mp4"),
 ]

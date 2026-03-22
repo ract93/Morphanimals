@@ -16,6 +16,7 @@ class SimulationMetrics:
         self.death_from_competition = 0
         self.deaths_from_starvation = 0
         self.deaths_from_exposure = 0
+        self.deaths_from_predation = 0
 
         self.total_age = 0
         self.total_lifespan = 0
@@ -24,6 +25,7 @@ class SimulationMetrics:
         self.total_metabolism = 0
         self.total_reproduction_threshold = 0
         self.total_speed = 0
+        self.total_trophism = 0
 
         self.average_age = 0
         self.average_lifespan = 0
@@ -32,6 +34,7 @@ class SimulationMetrics:
         self.average_metabolism = 0
         self.average_reproduction_threshold = 0
         self.average_speed = 0
+        self.average_trophism = 0
 
         self.csv_logging_enabled = False
 
@@ -41,10 +44,10 @@ class SimulationMetrics:
         self.fields = [
             "Timestep", "Population Count", "Cumulative Deaths",
             "Deaths from Aging", "Deaths from Competition",
-            "Deaths from Starvation", "Deaths from Exposure",
+            "Deaths from Starvation", "Deaths from Exposure", "Deaths from Predation",
             "Average Age", "Average Lifespan", "Average Strength",
             "Average Hardiness", "Average Metabolism",
-            "Average Reproduction Threshold", "Average Speed",
+            "Average Reproduction Threshold", "Average Speed", "Average Trophism",
             "Number of Species",
         ]
         # Line-buffered so data reaches disk incrementally, not all at the end.
@@ -63,6 +66,7 @@ class SimulationMetrics:
             "Deaths from Competition": self.death_from_competition,
             "Deaths from Starvation": self.deaths_from_starvation,
             "Deaths from Exposure": self.deaths_from_exposure,
+            "Deaths from Predation": self.deaths_from_predation,
             "Average Age": self.average_age,
             "Average Lifespan": self.average_lifespan,
             "Average Strength": self.average_strength,
@@ -70,6 +74,7 @@ class SimulationMetrics:
             "Average Metabolism": self.average_metabolism,
             "Average Reproduction Threshold": self.average_reproduction_threshold,
             "Average Speed": self.average_speed,
+            "Average Trophism": self.average_trophism,
             "Number of Species": self.species_counts,
         }
         self.writer.writerow(row)
@@ -102,6 +107,7 @@ class SimulationMetrics:
         self.average_metabolism = self.total_metabolism / population
         self.average_reproduction_threshold = self.total_reproduction_threshold / population
         self.average_speed = self.total_speed / population
+        self.average_trophism = self.total_trophism / population
 
     def reset_averages(self):
         """Clear per-step accumulators. Call after calculate_averages() each step."""
@@ -112,15 +118,17 @@ class SimulationMetrics:
         self.total_metabolism = 0
         self.total_reproduction_threshold = 0
         self.total_speed = 0
+        self.total_trophism = 0
         self.population_count = 0
 
     def get_state_string(self, trial_num, step, total_steps):
         return (
             f"Trial {trial_num} | Step {step}/{total_steps} | "
             f"Pop:{self.population_count} | "
-            f"Deaths:{self.cumulative_deaths}(Age:{self.deaths_from_aging} Comp:{self.death_from_competition} Starv:{self.deaths_from_starvation} Exp:{self.deaths_from_exposure}) | "
+            f"Deaths:{self.cumulative_deaths}(Age:{self.deaths_from_aging} Comp:{self.death_from_competition} Starv:{self.deaths_from_starvation} Exp:{self.deaths_from_exposure} Pred:{self.deaths_from_predation}) | "
             f"Age:{self.average_age:.1f} Life:{self.average_lifespan:.1f} Str:{self.average_strength:.1f} "
             f"Hard:{self.average_hardiness:.1f} Metab:{self.average_metabolism:.1f} "
-            f"Repr:{self.average_reproduction_threshold:.1f} Spd:{self.average_speed:.1f} | "
+            f"Repr:{self.average_reproduction_threshold:.1f} Spd:{self.average_speed:.1f} "
+            f"Troph:{self.average_trophism:.2f} | "
             f"Species:{self.species_counts}"
         )

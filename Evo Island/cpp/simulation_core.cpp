@@ -1,4 +1,5 @@
 #include "simulation_core.h"
+#include <algorithm>
 #include <array>
 #include <limits>
 #include <pybind11/stl.h>
@@ -28,9 +29,10 @@ Simulation::Simulation(py::dict cfg,
     enable_aging         = cfg["enable_aging"].cast<bool>();
     enable_food          = cfg["enable_food"].cast<bool>();
     enable_repro_thresh  = cfg["enable_reproduction_threshold"].cast<bool>();
-    enable_violence      = cfg["enable_violence"].cast<bool>();
-    // enable_movement defaults to false so old configs remain plant-like
-    enable_movement      = cfg.contains("enable_movement") ? cfg["enable_movement"].cast<bool>() : false;
+    enable_space_competition      = cfg["enable_space_competition"].cast<bool>();
+    // New flags default to off so old configs remain unchanged
+    enable_movement  = cfg.contains("enable_movement")  ? cfg["enable_movement"].cast<bool>()  : false;
+    enable_predation = cfg.contains("enable_predation") ? cfg["enable_predation"].cast<bool>() : false;
 
     // Trade-off costs default to 0 / large-cap so old configs run unchanged
     longevity_cost               = cfg.contains("longevity_cost")               ? cfg["longevity_cost"].cast<float>()               : 0.0f;
@@ -39,6 +41,10 @@ Simulation::Simulation(py::dict cfg,
     metabolism_extraction_factor = cfg.contains("metabolism_extraction_factor") ? cfg["metabolism_extraction_factor"].cast<float>() : 1000.0f;
     strength_repro_factor        = cfg.contains("strength_repro_factor")        ? cfg["strength_repro_factor"].cast<float>()        : 0.0f;
     movement_cost                = cfg.contains("movement_cost")                ? cfg["movement_cost"].cast<float>()                : 0.0f;
+    predation_efficiency         = cfg.contains("predation_efficiency")         ? cfg["predation_efficiency"].cast<float>()         : 0.6f;
+    predation_resistance         = cfg.contains("predation_resistance")         ? cfg["predation_resistance"].cast<float>()         : 0.02f;
+    predation_threshold          = cfg.contains("predation_threshold")          ? cfg["predation_threshold"].cast<float>()          : 0.3f;
+    trophism_cost                = cfg.contains("trophism_cost")                ? cfg["trophism_cost"].cast<float>()                : 0.0f;
 
     agents.resize(N * N);
     world .resize(N * N);
@@ -104,11 +110,13 @@ void Simulation::deplete_cell_food(int i, int j, int step, float consumed) {
 }
 
 // Attempt to place a newborn at (ni,nj).
-// Hardiness check: if the newborn cannot survive the terrain difficulty it dies
-// immediately (counted as an exposure death).
-// Violence check: if the cell is occupied and violence is enabled, the stronger
-// agent wins and the weaker is discarded. When violence is off a newborn
-// silently overwrites any occupant — matching the original Python behaviour.
+// Hardiness check: if the newborn cannot survive the terrain it dies immediately.
+// Occupied cell resolution — determined by trophism relationship:
+//   trophism_diff > predation_threshold  →  predation: newborn eats resident and
+//                                            takes the cell (herbivore colonising a
+//                                            plant patch, carnivore displacing prey).
+//   otherwise                            →  competition: probabilistic strength fight.
+// This lets trophic layers emerge without any hardcoded boundaries.
 void Simulation::try_birth(Agent newborn, int ni, int nj, StepResult& res) {
     if (!in_range(ni, nj)) return;
 
@@ -117,13 +125,36 @@ void Simulation::try_birth(Agent newborn, int ni, int nj, StepResult& res) {
         return;
     }
 
-    if (at(ni, nj).alive && enable_violence) {
-        ++res.deaths_competition;
-        if (newborn.strength > at(ni, nj).strength)
+    if (at(ni, nj).alive) {
+        float trophism_diff = newborn.trophism - at(ni, nj).trophism;
+
+        if (enable_predation && trophism_diff > predation_threshold) {
+            // Predation: newborn eats resident's stored energy and takes the cell.
+            float steal_fraction = newborn.trophism * predation_efficiency
+                                 / (1.0f + (at(ni, nj).strength + at(ni, nj).hardiness) * predation_resistance);
+            newborn.energy_reserves += at(ni, nj).energy_reserves * steal_fraction;
             at(ni, nj) = newborn;
-        // loser simply disappears — live_set unchanged because the cell stays occupied
+            ++res.deaths_predation;
+            // live_set unchanged — cell stays occupied by newborn
+        } else if (enable_space_competition) {
+            ++res.deaths_competition;
+            // Probabilistic strength fight — prevents strength ratcheting to max.
+            float total = newborn.strength + at(ni, nj).strength;
+            float p_newborn_wins = (total > 0.0f) ? newborn.strength / total : 0.5f;
+            std::uniform_real_distribution<float> uni(0.0f, 1.0f);
+            if (uni(rng) < p_newborn_wins)
+                at(ni, nj) = newborn;
+            // loser dies — live_set unchanged because cell stays occupied
+        }
+        // If neither flag is set, newborn overwrites resident unconditionally —
+        // preserving the original pre-violence behaviour for configs that disable
+        // both flags to allow unconstrained population growth.
+        if (!enable_predation && !enable_space_competition) {
+            at(ni, nj) = newborn;
+            // live_set unchanged — cell stays occupied
+        }
     } else {
-        // Cell is empty OR violence is disabled — newborn takes the cell
+        // Empty cell — newborn takes it unconditionally.
         at(ni, nj) = newborn;
         int k = key(ni, nj);
         if (live_set.find(k) == live_set.end()) {
@@ -137,13 +168,16 @@ void Simulation::try_birth(Agent newborn, int ni, int nj, StepResult& res) {
 
 // Execute one full turn for the agent at (i,j):
 //   1. Age — may die of old age
-//   2. Eat — extract food (capped by metabolism), pay maintenance costs, may starve
-//   3. Reproduce — gated by energy threshold; offspring placed in random neighbour
-//   4. Move — random walk of up to `speed` steps (enable_movement must be true)
+//   2. Eat — additive model: autotroph and predation channels both active,
+//             scaled by (1-trophism) and trophism respectively.
+//   3. Maintenance costs — pay energy for all active traits
+//   4. Reproduce — gated by energy threshold; birth target prefers empty cells,
+//             falls back to occupied only when saturated; collision resolved by
+//             trophism_diff (predation if > threshold, else strength competition).
+//   5. Move — random walk; high-trophism movers can enter occupied cells by
+//             predating the resident (trophism_diff > predation_threshold).
 //
-// last_step_acted guards against an agent acting twice in one step: when an
-// agent moves into a cell that is still in the step snapshot it would otherwise
-// be processed again at its new coordinates.
+// last_step_acted guards against an agent acting twice in one step.
 void Simulation::step_agent(int i, int j, int current_step, StepResult& res) {
     Agent& a = at(i, j);
     if (!a.alive) return;
@@ -158,7 +192,7 @@ void Simulation::step_agent(int i, int j, int current_step, StepResult& res) {
         return;
     }
 
-    // ── 2. Eat & maintenance ──────────────────────────────────────────────────
+    // ── 2. Eat ────────────────────────────────────────────────────────────────
     if (enable_food) {
         if (a.energy_reserves <= 0.0f) {
             kill_at(i, j);
@@ -166,24 +200,82 @@ void Simulation::step_agent(int i, int j, int current_step, StepResult& res) {
             return;
         }
 
-        // Metabolism gates extraction: faster metabolism → more food extracted per
-        // visit, but also higher burn rate. Creates r/K selection pressure:
-        //   high metabolism → coloniser (gorges on fresh cells, dies in depleted ones)
-        //   low  metabolism → survivor  (eats little, persists on depleted cells)
-        float available   = get_available_food(i, j, current_step);
-        float max_extract = 1.0f + a.metabolism * metabolism_extraction_factor;
-        float food        = std::min(available, max_extract);
-        deplete_cell_food(i, j, current_step, food);
-        a.consume_food(food);
+        // Additive model: both pathways active simultaneously, scaled by trophism.
+        //   autotroph_gain = (1 - trophism) * env_food
+        //   predation_gain = trophism * stolen_energy
+        // No fitness valley — smooth gradient from pure autotroph (t=0) to pure
+        // predator (t=1). Specialists outperform generalists in their niche.
+
+        // ── Autotrophic component ────────────────────────────────────────────
+        // When predation is disabled trophism has no effect — autotroph_rate
+        // stays at 1.0 so the gene can mutate freely without silently penalising
+        // all agents. Mirrors how speed/strength genes are inert when their
+        // feature flag is off.
+        float autotroph_rate = enable_predation ? (1.0f - a.trophism) : 1.0f;
+        if (autotroph_rate > 0.0f) {
+            float available   = get_available_food(i, j, current_step);
+            float max_extract = autotroph_rate * (1.0f + a.metabolism * metabolism_extraction_factor);
+            float food        = std::min(available, max_extract);
+            deplete_cell_food(i, j, current_step, food);
+            a.consume_food(food);
+        }
+
+        // ── Predation component ──────────────────────────────────────────────
+        // Prey strength resists the steal: steal_fraction /= (1 + strength * resistance).
+        // Mobile prey (speed >= 1) flee to an adjacent empty cell after being hit,
+        // making them harder to repeatedly target. Sessile prey stay put (grazed,
+        // but survive as long as energy > 0 — like a plant being browsed).
+        if (enable_predation && a.trophism > 0.0f) {
+            int order[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+            std::shuffle(order, order + 8, rng);
+
+            for (int k = 0; k < 8; ++k) {
+                int ni = i + OFFSETS[order[k]][0];
+                int nj = j + OFFSETS[order[k]][1];
+                if (!in_range(ni, nj)) continue;
+                Agent& prey = at(ni, nj);
+                if (!prey.alive) continue;
+
+                float steal_fraction = a.trophism * predation_efficiency
+                                     / (1.0f + (prey.strength + prey.hardiness) * predation_resistance);
+                float stolen = prey.energy_reserves * steal_fraction;
+                a.consume_food(stolen);
+                prey.metabolize(stolen);
+
+                if (prey.energy_reserves <= 0.0f) {
+                    kill_at(ni, nj);
+                    ++res.deaths_predation;
+                } else if (enable_movement && prey.speed >= 1.0f) {
+                    // Mobile prey flees to a random adjacent empty cell.
+                    int flee_order[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+                    std::shuffle(flee_order, flee_order + 8, rng);
+                    for (int f = 0; f < 8; ++f) {
+                        int fi = ni + OFFSETS[flee_order[f]][0];
+                        int fj = nj + OFFSETS[flee_order[f]][1];
+                        if (!in_range(fi, fj)) continue;
+                        if (at(fi, fj).alive)  continue;
+                        at(fi, fj) = at(ni, nj);
+                        at(fi, fj).last_step_acted = current_step;
+                        at(ni, nj).kill();
+                        live_set.erase(key(ni, nj));
+                        live_set.insert(key(fi, fj));
+                        live.push_back({fi, fj});
+                        break;
+                    }
+                }
+                // Sessile prey (speed == 0) stay put — repeatedly grazeable
+                // but survive as long as energy > 0.
+                break;  // eat at most one neighbour per step
+            }
+        }
 
         // Trait maintenance: the cost of running each body system per step.
-        // Prevents every gene from drifting to its maximum — a large, armoured,
-        // long-lived, fast fighter must burn far more calories to sustain itself.
         float maintenance = a.metabolism
-                          + a.lifespan  * longevity_cost   // cellular repair
-                          + a.hardiness * armor_cost        // structural tissue
-                          + a.strength  * strength_cost     // muscle upkeep
-                          + a.speed     * movement_cost;    // locomotion overhead
+                          + a.lifespan  * longevity_cost
+                          + a.hardiness * armor_cost
+                          + a.strength  * strength_cost
+                          + (enable_movement  ? a.speed    * movement_cost  : 0.0f)
+                          + (enable_predation ? a.trophism * trophism_cost  : 0.0f);
         a.metabolize(maintenance);
 
         if (a.energy_reserves <= 0.0f) {
@@ -194,8 +286,6 @@ void Simulation::step_agent(int i, int j, int current_step, StepResult& res) {
     }
 
     // ── 3. Reproduction ───────────────────────────────────────────────────────
-    // Strong agents require more energy to breed (muscle maintenance delays
-    // reproduction), creating a fighter vs. breeder trade-off.
     if (enable_repro_thresh && enable_food) {
         float effective_threshold = a.reproduction_threshold
                                   + a.strength * strength_repro_factor;
@@ -204,58 +294,79 @@ void Simulation::step_agent(int i, int j, int current_step, StepResult& res) {
     }
 
     // ── 4. Movement ───────────────────────────────────────────────────────────
-    // The agent translates itself up to `speed` cells via an unbiased random walk
-    // before placing its offspring. This decouples locomotion from reproduction,
-    // allowing mobile agents to seek out food-rich cells.
-    // Movement is capped at 20 steps per turn to keep per-step cost bounded.
     if (enable_movement && a.speed >= 1.0f) {
-        std::uniform_int_distribution<int> move_dice(1, 8);  // excludes stay-in-place
+        std::uniform_int_distribution<int> move_dice(1, 8);
         int ci = i, cj = j;
         int steps = static_cast<int>(std::min(a.speed, 20.0f));
         for (int s = 0; s < steps; ++s) {
             int roll = move_dice(rng);
             int ni = ci + OFFSETS[roll][0];
             int nj = cj + OFFSETS[roll][1];
-            if (!in_range(ni, nj))   continue;  // map boundary
-            if (at(ni, nj).alive)    continue;  // occupied — skip this step of the walk
-            // Terrain check: agent must be able to survive the destination cell
+            if (!in_range(ni, nj)) continue;
             if (at(ci, cj).hardiness <= static_cast<float>(LEVEL_DIFF[world[key(ni, nj)]])) continue;
-            // Move: copy agent to new cell, clear old cell, update bookkeeping
+
+            if (at(ni, nj).alive) {
+                // Occupied: only enter if mover is sufficiently more predatory
+                // than resident — herbivore grazing through a plant patch, or
+                // carnivore pushing through prey territory.
+                float trophism_diff = at(ci, cj).trophism - at(ni, nj).trophism;
+                if (!enable_predation || trophism_diff <= predation_threshold) continue;
+
+                // Predate resident: steal energy, kill it, then move in.
+                float steal_fraction = at(ci, cj).trophism * predation_efficiency
+                                     / (1.0f + (at(ni, nj).strength + at(ni, nj).hardiness) * predation_resistance);
+                at(ci, cj).consume_food(at(ni, nj).energy_reserves * steal_fraction);
+                kill_at(ni, nj);
+                ++res.deaths_predation;
+            }
+
             at(ni, nj) = at(ci, cj);
-            at(ni, nj).last_step_acted = current_step;  // prevent double-act at new position
+            at(ni, nj).last_step_acted = current_step;
             at(ci, cj).kill();
             live_set.erase(key(ci, cj));
             live_set.insert(key(ni, nj));
-            live.push_back({ni, nj});  // deduplicated during live rebuild at end of step()
+            live.push_back({ni, nj});
             ci = ni;
             cj = nj;
         }
-        // Update i/j so the offspring is placed relative to the final position
         i = ci;
         j = cj;
     }
 
-    // Place offspring in a random Moore neighbour of the agent's current position.
-    // Offspring start with energy equal to the threshold the parent paid — creating
-    // a genuine r/K trade-off: low threshold = many cheap offspring that start
-    // energy-poor; high threshold = fewer but hardier offspring.
+    // Place offspring in a Moore neighbour, preferring empty cells.
+    // Violence (competition) only triggers as a last resort when all neighbours
+    // are occupied — naturally rarer for mobile agents that have spread out,
+    // but still common for sessile agents packed into dense patches (canopy crowding).
     Agent newborn = Agent::reproduce_asexually(at(i, j), mutation_rate, rng);
     newborn.energy_reserves = std::max(1.0f, at(i, j).reproduction_threshold);
-    std::uniform_int_distribution<int> dice(0, 8);
-    int roll = dice(rng);
-    int ni   = i + OFFSETS[roll][0];
-    int nj   = j + OFFSETS[roll][1];
-    try_birth(newborn, ni, nj, res);
+
+    int birth_order[9] = {0, 1, 2, 3, 4, 5, 6, 7, 8};
+    std::shuffle(birth_order, birth_order + 9, rng);
+
+    // First pass: find an empty in-range cell.
+    int birth_ni = -1, birth_nj = -1;
+    for (int b = 0; b < 9; ++b) {
+        int ni = i + OFFSETS[birth_order[b]][0];
+        int nj = j + OFFSETS[birth_order[b]][1];
+        if (!in_range(ni, nj)) continue;
+        if (!at(ni, nj).alive) { birth_ni = ni; birth_nj = nj; break; }
+    }
+    // Fallback: all neighbours occupied — pick any in-range cell (violence may follow).
+    if (birth_ni == -1) {
+        for (int b = 0; b < 9; ++b) {
+            int ni = i + OFFSETS[birth_order[b]][0];
+            int nj = j + OFFSETS[birth_order[b]][1];
+            if (in_range(ni, nj)) { birth_ni = ni; birth_nj = nj; break; }
+        }
+    }
+    if (birth_ni != -1) try_birth(newborn, birth_ni, birth_nj, res);
 }
 
 // ── Speciation ────────────────────────────────────────────────────────────────
 
-// Greedy nearest-representative clustering in 6D genome space.
-// Each agent is assigned to the closest existing species representative if the
-// Euclidean distance is below speciation_threshold; otherwise it founds a new
-// species. Order-dependent but fast — mirrors the Python implementation.
+// Greedy nearest-representative clustering in 7D genome space.
 void Simulation::classify_species() {
-    std::vector<std::array<float,6>> rep_genomes;
+    std::vector<std::array<float,7>> rep_genomes;
     std::vector<int>                 rep_labels;
     int species_counter = 1;
 
@@ -269,7 +380,7 @@ void Simulation::classify_species() {
             int   best_idx  = -1;
             for (int s = 0; s < static_cast<int>(rep_genomes.size()); ++s) {
                 float d = 0.0f;
-                for (int k = 0; k < 6; ++k) {
+                for (int k = 0; k < 7; ++k) {
                     float diff = a.genome[k] - rep_genomes[s][k];
                     d += diff * diff;
                 }
@@ -283,10 +394,9 @@ void Simulation::classify_species() {
         }
 
         if (!assigned) {
-            // New species: this agent becomes the representative
             a.species = species_counter;
-            std::array<float,6> g;
-            for (int k = 0; k < 6; ++k) g[k] = a.genome[k];
+            std::array<float,7> g;
+            for (int k = 0; k < 7; ++k) g[k] = a.genome[k];
             rep_genomes.push_back(g);
             rep_labels .push_back(species_counter);
             ++species_counter;
@@ -296,8 +406,6 @@ void Simulation::classify_species() {
 
 // ── Metrics collection ────────────────────────────────────────────────────────
 
-// Sum per-agent trait values into res. Python divides by population_count to
-// get averages. Species count is the number of distinct labels this step.
 void Simulation::collect_metrics(StepResult& res) const {
     std::unordered_set<int> species_set;
     for (auto& [i, j] : live) {
@@ -309,7 +417,8 @@ void Simulation::collect_metrics(StepResult& res) const {
         res.total_hardiness    += a.hardiness;
         res.total_metabolism   += a.metabolism;
         res.total_reproduction_threshold += a.reproduction_threshold;
-        res.total_speed          += a.speed;
+        res.total_speed        += a.speed;
+        res.total_trophism     += a.trophism;
         ++res.population_count;
         species_set.insert(a.species);
     }
@@ -322,8 +431,7 @@ StepResult Simulation::step(int current_step) {
     StepResult res;
 
     // Snapshot live positions at step start so that newborns placed during this
-    // step do not act until the next step. Matches the Python list(live_agents)
-    // copy that served the same purpose in the original implementation.
+    // step do not act until the next step.
     std::vector<std::pair<int,int>> snapshot = live;
 
     for (auto& [i, j] : snapshot)
@@ -332,9 +440,6 @@ StepResult Simulation::step(int current_step) {
     classify_species();
 
     // Rebuild live / live_set: drop dead entries and remove duplicates.
-    // Duplicates can arise when an agent moves into a cell whose original
-    // occupant died earlier in the same step, causing two entries for the
-    // same key to coexist in live temporarily.
     {
         std::vector<std::pair<int,int>> new_live;
         std::unordered_set<int>         new_set;
@@ -360,8 +465,6 @@ StepResult Simulation::step(int current_step) {
 
 // ── Frame extraction ──────────────────────────────────────────────────────────
 
-// Return an N×N numpy array (or N×N×3 for "color") suitable for video rendering.
-// Dead cells produce 0 in all channels. Called every frame_save_interval steps.
 py::array_t<float> Simulation::get_attribute_matrix(const std::string& attr) const {
     if (attr == "color") {
         py::array_t<float> out({N, N, 3});
@@ -390,6 +493,7 @@ py::array_t<float> Simulation::get_attribute_matrix(const std::string& attr) con
                 else if (attr == "metabolism")             val = a.metabolism;
                 else if (attr == "reproduction_threshold") val = a.reproduction_threshold;
                 else if (attr == "speed")                  val = a.speed;
+                else if (attr == "trophism")               val = a.trophism;
                 else if (attr == "genetic_distance")       val = a.genetic_distance;
             }
             buf(i, j) = val;

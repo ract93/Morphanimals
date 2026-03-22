@@ -20,6 +20,7 @@ struct StepResult {
     int    deaths_competition  = 0;
     int    deaths_starvation   = 0;
     int    deaths_exposure     = 0;  // newborns killed by terrain hardiness check
+    int    deaths_predation    = 0;  // agents killed by heterotrophs
     double total_age           = 0.0;
     double total_lifespan      = 0.0;
     double total_strength      = 0.0;
@@ -27,6 +28,7 @@ struct StepResult {
     double total_metabolism    = 0.0;
     double total_reproduction_threshold = 0.0;
     double total_speed         = 0.0;
+    double total_trophism      = 0.0;
 };
 
 // One Simulation instance per trial. Owns the agent grid, food grid, and terrain.
@@ -63,8 +65,9 @@ private:
     bool  enable_aging;
     bool  enable_food;
     bool  enable_repro_thresh;
-    bool  enable_violence;
+    bool  enable_space_competition;
     bool  enable_movement;
+    bool  enable_predation;
 
     // Agent hardiness must strictly exceed this value to survive a given terrain level.
     static constexpr int LEVEL_DIFF[6] = {0, 1, 10, 20, 40, 50};
@@ -76,6 +79,10 @@ private:
     float metabolism_extraction_factor;  // max food per visit = 1 + metabolism * factor
     float strength_repro_factor;         // extra energy threshold per unit of strength
     float movement_cost;                 // energy/step per unit of speed
+    float predation_efficiency;          // base fraction of prey energy transferred to predator
+    float predation_resistance;          // prey.strength dampens steal: steal /= (1 + strength * resistance)
+    float predation_threshold;           // min trophism_diff for a collision to resolve as predation vs competition
+    float trophism_cost;                 // energy/step per unit of trophism (predatory apparatus upkeep)
 
     inline Agent&       at(int i, int j)       { return agents[i*N+j]; }
     inline const Agent& at(int i, int j) const { return agents[i*N+j]; }
