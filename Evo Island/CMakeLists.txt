@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(Python REQUIRED COMPONENTS Interpreter Development.Module)
 find_package(pybind11 CONFIG REQUIRED)
+find_package(OpenMP)
 
 pybind11_add_module(evo_core
     cpp/agent.cpp
@@ -19,5 +20,9 @@ target_compile_options(evo_core PRIVATE
     $<$<CXX_COMPILER_ID:MSVC>:/O2 /arch:AVX2>
     $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-O3 -march=native>
 )
+
+if(OpenMP_CXX_FOUND)
+    target_link_libraries(evo_core PRIVATE OpenMP::OpenMP_CXX)
+endif()
 
 install(TARGETS evo_core DESTINATION .)

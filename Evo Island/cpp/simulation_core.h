@@ -1,11 +1,17 @@
 #pragma once
 #include "agent.h"
+#include <atomic>
+#include <memory>
 #include <string>
 #include <unordered_set>
 #include <utility>
 #include <vector>
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
+
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 namespace py = pybind11;
 
@@ -19,8 +25,8 @@ struct StepResult {
     int    deaths_aging        = 0;
     int    deaths_competition  = 0;
     int    deaths_starvation   = 0;
-    int    deaths_exposure     = 0;  // newborns killed by terrain hardiness check
-    int    deaths_predation    = 0;  // agents killed by heterotrophs
+    int    deaths_exposure     = 0;
+    int    deaths_predation    = 0;
     double total_age           = 0.0;
     double total_lifespan      = 0.0;
     double total_strength      = 0.0;
@@ -33,8 +39,41 @@ struct StepResult {
     double total_threat_response = 0.0;
 };
 
+// Placement request written into the per-cell queue during Phase 2.
+struct PlacementReq {
+    Agent agent;
+    bool  is_birth;
+};
+
+// Output of Phase 1 (parallel) per-agent computation.
+// No grid writes happen in Phase 1 — all results are collected here
+// and resolved in Phase 2 (sequential).
+struct AgentUpdate {
+    bool  alive        = false;
+    // Per-step death deltas (merged into StepResult in Phase 2)
+    int   d_aging      = 0;
+    int   d_starvation = 0;
+    int   d_exposure   = 0;   // newborn killed by terrain
+    // Survivor destination
+    int   dst_i = -1, dst_j = -1;
+    Agent result;             // agent state after self-processing
+    // Birth
+    bool  has_birth  = false;
+    int   birth_i = -1, birth_j = -1;
+    Agent newborn;
+    // Predation this agent performed on a neighbour
+    bool  has_prey    = false;
+    int   prey_i  = -1, prey_j  = -1;
+    float prey_damage = 0.0f;  // inf = movement-predation (always kills)
+};
+
 // One Simulation instance per trial. Owns the agent grid, food grid, and terrain.
 // Driven by repeated calls to step() until extinct or the step limit is reached.
+//
+// Two-buffer (Jacobi) update model: all agents read the start-of-step state
+// simultaneously (Phase 1, parallel), then conflicts are resolved in Phase 2
+// (sequential). This eliminates Gauss-Seidel ordering artefacts and allows
+// Phase 1 to run fully in parallel via OpenMP.
 class Simulation {
 public:
     Simulation(py::dict cfg,
@@ -43,21 +82,31 @@ public:
                int start_i, int start_j);
 
     StepResult          step(int current_step);
-    // Returns N×N (or N×N×3 for "color") numpy array of the named attribute. Dead cells = 0.
     py::array_t<float>  get_attribute_matrix(const std::string& attr) const;
     bool                is_extinct() const { return live.empty(); }
 
 private:
     int N;
-    std::vector<Agent> agents;       // flat row-major N*N
-    std::vector<int>   world;        // flat N*N terrain difficulty levels (1-5)
-    std::vector<float> food_amount;  // flat N*N
-    std::vector<int>   food_last;    // flat N*N, step of last access (-1 = never)
+    std::vector<Agent> agents;       // read buffer  — start-of-step state (read-only during step)
+    std::vector<Agent> agents_next;  // write buffer — next-state target; swapped with agents each step
+    std::vector<int>   world;
+    std::vector<float> food_amount;
+    std::vector<int>   food_last;
 
-    std::vector<std::pair<int,int>> live;     // positions of all live agents
-    std::unordered_set<int>         live_set; // i*N+j keys for O(1) membership tests
+    std::vector<std::pair<int,int>> live;     // positions of all live agents (rebuilt each step)
+    std::unordered_set<int>         live_set; // i*N+j keys for O(1) membership (rebuilt each step)
 
     std::mt19937 rng;
+    std::vector<std::mt19937> thread_rngs;   // one per OpenMP thread, seeded from rng
+
+    // Per-cell atomic step-number for predation claiming.
+    // prey_claim_step[k] == current_step means prey at k was already claimed this step.
+    // Using exchange() to atomically claim; no reset needed between steps.
+    std::unique_ptr<std::atomic<int>[]> prey_claim_step;
+
+    // Per-cell placement queues (pre-allocated, cleared lazily via queued_cells).
+    std::vector<std::vector<PlacementReq>> cell_queue;
+    std::vector<int>                       queued_cells;
 
     // Feature flags
     float mutation_rate;
@@ -75,18 +124,22 @@ private:
     // Agent hardiness must strictly exceed this value to survive a given terrain level.
     static constexpr int LEVEL_DIFF[6] = {0, 1, 10, 20, 40, 50};
 
-    // Trade-off costs — prevent unconstrained trait maximisation.
-    float longevity_cost;                // energy/step per unit of lifespan
-    float armor_cost;                    // energy/step per unit of hardiness
-    float strength_cost;                 // energy/step per unit of strength
-    float metabolism_extraction_factor;  // max food per visit = 1 + metabolism * factor
-    float strength_repro_factor;         // extra energy threshold per unit of strength
-    float movement_cost;                 // energy/step per unit of speed
-    float predation_efficiency;          // base fraction of prey energy transferred to predator
-    float predation_resistance;          // prey.strength dampens steal: steal /= (1 + strength * resistance)
-    float predation_threshold;           // min trophism_diff for a collision to resolve as predation vs competition
-    float trophism_cost;                 // energy/step per unit of trophism (predatory apparatus upkeep)
-    float sociality_cost;                // energy/step per unit of |sociality| (sensing + signalling overhead)
+    // Trade-off costs
+    float longevity_cost;
+    float armor_cost;
+    float strength_cost;
+    float metabolism_extraction_factor;
+    float strength_repro_factor;
+    float movement_cost;
+    float predation_efficiency;
+    float predation_resistance;
+    float predation_threshold;
+    float trophism_cost;
+    float sociality_cost;
+
+    // Reusable distributions for the sequential phase (Phase 2).
+    std::uniform_real_distribution<float> uni01{0.0f, 1.0f};
+    std::uniform_int_distribution<int>    dice8{0, 7};
 
     inline Agent&       at(int i, int j)       { return agents[i*N+j]; }
     inline const Agent& at(int i, int j) const { return agents[i*N+j]; }
@@ -95,11 +148,15 @@ private:
     }
     inline int          key(int i, int j) const { return i*N+j; }
 
-    void  step_agent(int i, int j, int current_step, StepResult& res);
-    void  try_birth(Agent newborn, int ni, int nj, StepResult& res);
+    // Phase 1: compute one agent's full update without touching shared state.
+    void compute_agent_update(int live_idx, int current_step,
+                              AgentUpdate& out, std::mt19937& rng_t);
+
+    // Phase 2: resolve all AgentUpdates into agents_next; rebuild live/live_set.
+    void resolve_placements(std::vector<AgentUpdate>& updates, StepResult& res);
+
     float get_available_food(int i, int j, int step) const;
     void  deplete_cell_food(int i, int j, int step, float consumed);
-    void  kill_at(int i, int j);
     void  classify_species();
     void  collect_metrics(StepResult& res) const;
 };

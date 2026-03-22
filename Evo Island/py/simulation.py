@@ -1,5 +1,7 @@
 import json
 import os
+import queue
+import threading
 
 from environment import Environment
 from genes import GENES, VIDEO_SPECS
@@ -88,6 +90,23 @@ def run_game(trial_num, unique_results_dir, status_queue, cfg):
     writers  = open_frame_writers(videos_dir, frame_rate)
     captures = {attr: [] for attr in attrs}
 
+    # Background thread drains this queue and encodes video frames, keeping
+    # the simulation loop from blocking on imageio I/O.
+    _frame_queue = queue.Queue()
+
+    def _frame_writer_thread():
+        while True:
+            item = _frame_queue.get()
+            if item is None:           # sentinel — shut down
+                _frame_queue.task_done()
+                break
+            attr, frame = item
+            writers[attr].write(frame)
+            _frame_queue.task_done()
+
+    _writer_thread = threading.Thread(target=_frame_writer_thread, daemon=True)
+    _writer_thread.start()
+
     current_sim_step = 0
 
     try:
@@ -133,16 +152,20 @@ def run_game(trial_num, unique_results_dir, status_queue, cfg):
                     print(f"\n{extinct_str}")
                 break
 
-            # Write video frames at the configured interval
+            # Snapshot matrices synchronously (fast C++ read), then hand off to
+            # the background thread for encoding — simulation loop never blocks.
             if current_sim_step % frame_save_interval == 0:
-                for attr, writer in writers.items():
-                    writer.write(sim.get_attribute_matrix(attr))
+                for attr in writers:
+                    _frame_queue.put((attr, sim.get_attribute_matrix(attr)))
 
             # Save full-resolution image captures at evenly-spaced checkpoints
             if current_sim_step in capture_intervals:
                 for attr in captures:
                     captures[attr].append((current_sim_step, sim.get_attribute_matrix(attr)))
     finally:
+        # Stop the writer thread and wait for all queued frames to flush
+        _frame_queue.put(None)
+        _writer_thread.join()
         for writer in writers.values():
             writer.close()
 
