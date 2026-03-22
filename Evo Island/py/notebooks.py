@@ -13,7 +13,7 @@ def create_trial_notebook(trial_dir, notebook_path, status_queue=None, trial_num
     executed_notebook_path = notebook_path.replace(".ipynb", "_executed.ipynb")
     try:
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-        with open(notebook_path) as f:
+        with open(notebook_path, encoding="utf-8") as f:
             nb = nbf.read(f, as_version=4)
         ep = ExecutePreprocessor(timeout=600, kernel_name="python3")
         ep.preprocess(nb, {"metadata": {"path": trial_dir}})
@@ -34,7 +34,7 @@ def create_aggregate_notebook(unique_results_dir, notebook_path):
     executed_notebook_path = notebook_path.replace(".ipynb", "_executed.ipynb")
     try:
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-        with open(notebook_path) as f:
+        with open(notebook_path, encoding="utf-8") as f:
             nb = nbf.read(f, as_version=4)
         ep = ExecutePreprocessor(timeout=600, kernel_name="python3")
         ep.preprocess(nb, {"metadata": {"path": unique_results_dir}})

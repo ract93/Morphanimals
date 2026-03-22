@@ -48,6 +48,6 @@ struct Agent {
                                float mutation_rate, std::mt19937& rng);
     static Agent reproduce_asexually(const Agent& parent,
                                      float mutation_rate, std::mt19937& rng);
-    // Maps genome to RGB via HSV — related genomes share hues.
+    // Maps genome to RGB via fixed random projection — related genomes share colours.
     static void  genome_to_color(const float genome[9], float color[3]);
 };

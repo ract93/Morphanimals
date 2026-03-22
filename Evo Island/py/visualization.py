@@ -1,19 +1,28 @@
 import os
+from concurrent.futures import ThreadPoolExecutor
 
 import imageio
-import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
 
 from genes import VIDEO_SPECS
 
 
-def _to_rgb(raw, cmap_name, vmin, vmax):
-    arr = np.array(raw)
-    if cmap_name is None:
-        return (arr * 255).astype(np.uint8)
-    norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
-    return (plt.get_cmap(cmap_name)(norm(arr))[:, :, :3] * 255).astype(np.uint8)
+def _build_lut(cmap_name, vmin, vmax, n=256):
+    """Pre-build a 256×3 uint8 LUT for a given colormap and value range."""
+    cmap = plt.get_cmap(cmap_name)
+    lut = (cmap(np.linspace(0, 1, n))[:, :3] * 255).astype(np.uint8)
+    return lut, vmin, vmax
+
+
+def _apply_lut(arr, lut, vmin, vmax):
+    """Map a float32 H×W array to uint8 H×W×3 RGB via a pre-built LUT."""
+    n = len(lut)
+    indices = np.clip(
+        ((arr - vmin) / (vmax - vmin) * (n - 1)).astype(np.int32),
+        0, n - 1,
+    )
+    return lut[indices]
 
 
 def save_matrix_image(matrix, file_name):
@@ -25,35 +34,49 @@ def save_matrix_image(matrix, file_name):
     plt.close(fig)
 
 
-class FrameWriter:
-    """Streams frames directly to an MP4 file — no in-memory accumulation."""
+def encode_videos(frames_dir, videos_dir, frame_rate):
+    """Post-process: load saved .npy frames and encode one MP4 per attribute.
+    All attributes are encoded in parallel via ThreadPoolExecutor."""
 
-    def __init__(self, path, frame_rate, cmap_name, vmin, vmax):
-        self._writer = imageio.get_writer(path, fps=frame_rate, macro_block_size=1)
-        self._cmap = cmap_name
-        self._vmin = vmin
-        self._vmax = vmax
+    def encode_one(spec):
+        attr, cmap, vmin, vmax, fname = spec
+        attr_dir = os.path.join(frames_dir, attr)
+        if not os.path.isdir(attr_dir):
+            return
+        frame_files = sorted(
+            f for f in os.listdir(attr_dir) if f.endswith(".npy")
+        )
+        if not frame_files:
+            return
+        out_path = os.path.join(videos_dir, fname)
+        writer_kwargs = dict(fps=frame_rate, macro_block_size=1, codec='libx264', pixelformat='yuv420p')
+        if cmap is None:
+            # Raw RGB [0,1] array — just scale to uint8 directly.
+            with imageio.get_writer(out_path, **writer_kwargs) as writer:
+                for fname_frame in frame_files:
+                    writer.append_data((np.load(os.path.join(attr_dir, fname_frame)) * 255).astype(np.uint8))
+        else:
+            lut, v0, v1 = _build_lut(cmap, vmin, vmax)
+            with imageio.get_writer(out_path, **writer_kwargs) as writer:
+                for fname_frame in frame_files:
+                    writer.append_data(_apply_lut(np.load(os.path.join(attr_dir, fname_frame)), lut, v0, v1))
 
-    def write(self, raw):
-        self._writer.append_data(_to_rgb(raw, self._cmap, self._vmin, self._vmax))
-
-    def close(self):
-        self._writer.close()
-
-
-def open_frame_writers(videos_dir, frame_rate):
-    """Open one streaming FrameWriter per attribute. Call writer.close() when done."""
-    return {
-        attr: FrameWriter(os.path.join(videos_dir, fname), frame_rate, cmap, vmin, vmax)
-        for attr, cmap, vmin, vmax, fname in VIDEO_SPECS
-    }
+    with ThreadPoolExecutor() as executor:
+        futures = [executor.submit(encode_one, spec) for spec in VIDEO_SPECS]
+        for f in futures:
+            f.result()
 
 
 def save_capture_images(captures, images_dir):
     """Write PNG snapshots from the captures dict {attr: [(step, raw), ...]}."""
-    for attr, cmap_name, vmin, vmax, _ in VIDEO_SPECS:
+    for attr, cmap, vmin, vmax, _ in VIDEO_SPECS:
         for step, raw in captures.get(attr, []):
+            if cmap is None:
+                rgb = (np.array(raw) * 255).astype(np.uint8)
+            else:
+                lut, v0, v1 = _build_lut(cmap, vmin, vmax)
+                rgb = _apply_lut(np.array(raw), lut, v0, v1)
             imageio.imwrite(
                 os.path.join(images_dir, f"{attr}_step_{step}.png"),
-                _to_rgb(raw, cmap_name, vmin, vmax),
+                rgb,
             )

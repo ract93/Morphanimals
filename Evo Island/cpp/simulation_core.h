@@ -108,6 +108,14 @@ private:
     std::vector<std::vector<PlacementReq>> cell_queue;
     std::vector<int>                       queued_cells;
 
+    // Pre-allocated per-step buffers — avoids heap churn each step.
+    std::vector<AgentUpdate> updates;         // resized to live.size() each step
+
+    // Flat cell→live-index map for resolve_placements, replacing the per-step
+    // unordered_map. Entries are -1 when unused; reset lazily via dirty list.
+    std::vector<int> cell_to_idx;
+    std::vector<int> cell_to_idx_dirty;
+
     // Feature flags
     float mutation_rate;
     float speciation_threshold;

@@ -35,5 +35,6 @@
     "speciation_threshold": 10,
 
     "frame_save_interval": 3,
-    "frame_rate": 30
+    "frame_rate": 30,
+    "video_resolution": 1000
 }

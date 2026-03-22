@@ -63,38 +63,36 @@ void Agent::age_step(bool enable_aging, std::mt19937& rng) {
 void Agent::consume_food(float f) { energy_reserves += f; }
 void Agent::metabolize(float e)   { energy_reserves -= e; }
 
-// Normalise all 9 gene values relative to the genome's own min/max, then map
-// index-0 → hue, index-1 → saturation, index-2 → value. Agents with similar
-// genomes share similar hues, making species clusters visually identifiable.
+// Map all 9 genome values to RGB via a fixed random projection.
+// Each gene is normalised to [0,1] and centred on the ANCESTOR so the
+// initial population sits near the middle of the colour cube.  The fixed
+// matrix means the same genome always produces the same colour — genetic
+// neighbours share similar colours regardless of which genes drifted.
 void Agent::genome_to_color(const float g[9], float c[3]) {
-    float gmin = g[0], gmax = g[0];
-    for (int i = 1; i < 9; ++i) {
-        if (g[i] < gmin) gmin = g[i];
-        if (g[i] > gmax) gmax = g[i];
-    }
-    float range = (gmax != gmin) ? (gmax - gmin) : 1.0f;
-    float norm[9];
-    for (int i = 0; i < 9; ++i)
-        norm[i] = (g[i] - gmin) / range;
-
-    float H = norm[0];
-    float S = 0.5f + norm[1] * 0.5f;  // clamp to [0.5, 1.0] — avoids washed-out colours
-    float V = 0.5f + norm[2] * 0.5f;  // clamp to [0.5, 1.0] — avoids black cells
-
-    float hh = H * 6.0f;
-    int   sector = static_cast<int>(hh) % 6;
-    float ff = hh - static_cast<int>(hh);
-    float p  = V * (1.0f - S);
-    float q  = V * (1.0f - S * ff);
-    float t  = V * (1.0f - S * (1.0f - ff));
-
-    switch (sector) {
-        case 0: c[0]=V; c[1]=t; c[2]=p; break;
-        case 1: c[0]=q; c[1]=V; c[2]=p; break;
-        case 2: c[0]=p; c[1]=V; c[2]=t; break;
-        case 3: c[0]=p; c[1]=q; c[2]=V; break;
-        case 4: c[0]=t; c[1]=p; c[2]=V; break;
-        default: c[0]=V; c[1]=p; c[2]=q; break;
+    // Fixed 9×3 projection matrix — entries sampled offline from N(0,1).
+    // Never change these: doing so would recolour every existing result.
+    static constexpr float W[9][3] = {
+        { 0.4122f, -0.8090f,  0.4226f},
+        {-0.6577f,  0.1919f,  0.6122f},
+        { 0.5062f,  0.5530f, -0.2150f},
+        {-0.2348f, -0.4685f, -0.7312f},
+        { 0.7819f, -0.1234f,  0.3456f},
+        {-0.3291f,  0.6782f, -0.5521f},
+        { 0.1456f,  0.3891f,  0.8012f},
+        {-0.5678f, -0.2345f,  0.1234f},
+        { 0.6789f,  0.4512f, -0.3901f},
+    };
+    // ANCESTOR normalised to [0,1] — centres projection so initial population
+    // maps to ~(0.5, 0.5, 0.5) and diverges outward as evolution proceeds.
+    static constexpr float ANORM[9] = {
+        0.20f, 0.10f, 0.05f, 0.05f, 0.03f, 0.00f, 0.00f, 0.50f, 0.50f
+    };
+    constexpr float SCALE = 3.0f;
+    for (int j = 0; j < 3; ++j) {
+        float y = 0.0f;
+        for (int i = 0; i < 9; ++i)
+            y += W[i][j] * (g[i] / 100.0f - ANORM[i]);
+        c[j] = 1.0f / (1.0f + std::exp(-y * SCALE));
     }
 }
 

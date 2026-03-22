@@ -91,6 +91,9 @@ Simulation::Simulation(py::dict cfg,
 
     queued_cells.reserve(4096);
 
+    cell_to_idx.assign(N * N, -1);
+    cell_to_idx_dirty.reserve(4096);
+
     // Seed the simulation with a single ancestor
     agents[key(start_i, start_j)] = Agent::create_live_default();
     live.push_back({start_i, start_j});
@@ -333,18 +336,20 @@ void Simulation::resolve_placements(std::vector<AgentUpdate>& updates, StepResul
 
     // Step 1: Apply predation damage.
     // Build a reverse map: start-of-step cell key → index in updates[].
-    // live[idx] is the source position for updates[idx].
-    std::unordered_map<int, int> cell_to_idx;
-    cell_to_idx.reserve(live.size() * 2);
-    for (int idx = 0; idx < (int)live.size(); ++idx)
-        cell_to_idx[key(live[idx].first, live[idx].second)] = idx;
+    // Uses the pre-allocated flat array reset lazily via dirty list.
+    for (int idx = 0; idx < (int)live.size(); ++idx) {
+        int c = key(live[idx].first, live[idx].second);
+        cell_to_idx[c] = idx;
+        cell_to_idx_dirty.push_back(c);
+    }
 
     for (auto& atk : updates) {
         if (!atk.has_prey) continue;
-        auto it = cell_to_idx.find(key(atk.prey_i, atk.prey_j));
-        if (it == cell_to_idx.end()) continue;
+        int prey_key = key(atk.prey_i, atk.prey_j);
+        int prey_idx = cell_to_idx[prey_key];
+        if (prey_idx < 0) continue;
 
-        AgentUpdate& prey = updates[it->second];
+        AgentUpdate& prey = updates[prey_idx];
         if (!prey.alive) continue;
 
         if (std::isinf(atk.prey_damage)) {
@@ -435,6 +440,10 @@ void Simulation::resolve_placements(std::vector<AgentUpdate>& updates, StepResul
         queue.clear();
     }
     queued_cells.clear();
+
+    // Reset flat cell_to_idx entries touched this step.
+    for (int c : cell_to_idx_dirty) cell_to_idx[c] = -1;
+    cell_to_idx_dirty.clear();
 }
 
 // ── Speciation ────────────────────────────────────────────────────────────────
@@ -508,7 +517,7 @@ void Simulation::collect_metrics(StepResult& res) const {
 StepResult Simulation::step(int current_step) {
     StepResult res;
     const int  n_live = (int)live.size();
-    std::vector<AgentUpdate> updates(n_live);
+    updates.resize(n_live);
 
     // ── Phase 1: Parallel — each agent computes its update independently ───────
     // All reads from agents[] (start-of-step read buffer).
@@ -540,15 +549,18 @@ StepResult Simulation::step(int current_step) {
 
 py::array_t<float> Simulation::get_attribute_matrix(const std::string& attr) const {
     if (attr == "color") {
+        // Zero-initialise then fill only live cells — O(P) not O(N²).
         py::array_t<float> out({N, N, 3});
         auto buf = out.mutable_unchecked<3>();
         for (int i = 0; i < N; ++i)
-            for (int j = 0; j < N; ++j) {
-                const Agent& a = agents[i*N+j];
-                buf(i,j,0) = a.alive ? a.color[0] : 0.0f;
-                buf(i,j,1) = a.alive ? a.color[1] : 0.0f;
-                buf(i,j,2) = a.alive ? a.color[2] : 0.0f;
-            }
+            for (int j = 0; j < N; ++j)
+                buf(i,j,0) = buf(i,j,1) = buf(i,j,2) = 0.0f;
+        for (auto& [i, j] : live) {
+            const Agent& a = agents[key(i,j)];
+            buf(i,j,0) = a.color[0];
+            buf(i,j,1) = a.color[1];
+            buf(i,j,2) = a.color[2];
+        }
         return out;
     }
 
@@ -566,12 +578,15 @@ py::array_t<float> Simulation::get_attribute_matrix(const std::string& attr) con
     else if (attr == "threat_response")        field = &Agent::threat_response;
     else if (attr == "genetic_distance")       field = &Agent::genetic_distance;
 
+    // Zero-initialise then fill only live cells — O(P) not O(N²).
     py::array_t<float> out({N, N});
     auto buf = out.mutable_unchecked<2>();
     for (int i = 0; i < N; ++i)
-        for (int j = 0; j < N; ++j) {
-            const Agent& a = agents[i*N+j];
-            buf(i, j) = (a.alive && field) ? a.*field : 0.0f;
-        }
+        for (int j = 0; j < N; ++j)
+            buf(i, j) = 0.0f;
+    if (field) {
+        for (auto& [i, j] : live)
+            buf(i, j) = agents[key(i,j)].*field;
+    }
     return out;
 }

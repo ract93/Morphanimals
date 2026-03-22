@@ -1,12 +1,14 @@
 import json
 import os
-import queue
-import threading
+import shutil
+import tempfile
+
+import numpy as np
 
 from environment import Environment
 from genes import GENES, VIDEO_SPECS
 from metrics import SimulationMetrics
-from visualization import open_frame_writers, save_capture_images, save_matrix_image
+from visualization import encode_videos, save_capture_images, save_matrix_image
 
 try:
     from evo_core import Simulation as _CppSimulation
@@ -87,25 +89,13 @@ def run_game(trial_num, unique_results_dir, status_queue, cfg):
 
     # Attributes rendered as video layers and image captures — derived from genes registry
     attrs = [name for name, *_ in VIDEO_SPECS]
-    writers  = open_frame_writers(videos_dir, frame_rate)
     captures = {attr: [] for attr in attrs}
 
-    # Background thread drains this queue and encodes video frames, keeping
-    # the simulation loop from blocking on imageio I/O.
-    _frame_queue = queue.Queue()
-
-    def _frame_writer_thread():
-        while True:
-            item = _frame_queue.get()
-            if item is None:           # sentinel — shut down
-                _frame_queue.task_done()
-                break
-            attr, frame = item
-            writers[attr].write(frame)
-            _frame_queue.task_done()
-
-    _writer_thread = threading.Thread(target=_frame_writer_thread, daemon=True)
-    _writer_thread.start()
+    # Raw frames are written to disk during simulation and encoded to MP4 after.
+    # Each attribute gets its own subdirectory: frames_dir/<attr>/<step>.npy
+    frames_dir = tempfile.mkdtemp(prefix="evo_frames_")
+    for attr in attrs:
+        os.makedirs(os.path.join(frames_dir, attr))
 
     current_sim_step = 0
 
@@ -152,22 +142,27 @@ def run_game(trial_num, unique_results_dir, status_queue, cfg):
                     print(f"\n{extinct_str}")
                 break
 
-            # Snapshot matrices synchronously (fast C++ read), then hand off to
-            # the background thread for encoding — simulation loop never blocks.
+            # Snapshot and downsample each attribute matrix to disk — no encoding overhead
+            # on the simulation hot path.
             if current_sim_step % frame_save_interval == 0:
-                for attr in writers:
-                    _frame_queue.put((attr, sim.get_attribute_matrix(attr)))
+                for attr in attrs:
+                    np.save(os.path.join(frames_dir, attr, f"{current_sim_step:07d}.npy"), sim.get_attribute_matrix(attr))
 
             # Save full-resolution image captures at evenly-spaced checkpoints
             if current_sim_step in capture_intervals:
                 for attr in captures:
                     captures[attr].append((current_sim_step, sim.get_attribute_matrix(attr)))
+
     finally:
-        # Stop the writer thread and wait for all queued frames to flush
-        _frame_queue.put(None)
-        _writer_thread.join()
-        for writer in writers.values():
-            writer.close()
+        # Simulation done — encode all saved frames into MP4s, then clean up
+        encode_str = f"Trial {trial_num} | Encoding videos..."
+        if status_queue is not None:
+            status_queue.put((trial_num, encode_str))
+        else:
+            print(f"\n{encode_str}", flush=True)
+
+        encode_videos(frames_dir, videos_dir, frame_rate)
+        shutil.rmtree(frames_dir)
 
     save_capture_images(captures, images_dir)
     metrics.close_csv_logging()
