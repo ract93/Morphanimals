@@ -12,8 +12,6 @@ struct Agent {
     float energy_reserves   = 0.0f;
     float genetic_distance  = 0.0f;  // Euclidean distance from ANCESTOR genome
     int   species           = 0;
-    int   last_step_acted   = -1;    // prevents double-acting after moving into a
-                                     // cell still present in the step snapshot
 
     // Decoded traits — mirrors genome indices 0-8.
     // Updated by decode_genome() after any genome write.

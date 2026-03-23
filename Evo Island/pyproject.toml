@@ -10,3 +10,6 @@ requires-python = ">=3.12"
 [tool.scikit-build]
 cmake.build-type = "Release"
 build-dir = "build"
+
+[tool.pyright]
+extraPaths = ["py"]

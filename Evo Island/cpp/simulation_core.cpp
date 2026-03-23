@@ -3,7 +3,6 @@
 #include <array>
 #include <cmath>
 #include <limits>
-#include <unordered_map>
 #include <pybind11/stl.h>
 
 // The 9 Moore-neighbourhood offsets including stay-in-place (index 0).
@@ -44,7 +43,6 @@ Simulation::Simulation(py::dict cfg,
     movement_cost                = cfg.contains("movement_cost")                ? cfg["movement_cost"].cast<float>()                : 0.0f;
     predation_efficiency         = cfg.contains("predation_efficiency")         ? cfg["predation_efficiency"].cast<float>()         : 0.6f;
     predation_resistance         = cfg.contains("predation_resistance")         ? cfg["predation_resistance"].cast<float>()         : 0.02f;
-    predation_threshold          = cfg.contains("predation_threshold")          ? cfg["predation_threshold"].cast<float>()          : 0.3f;
     trophism_cost                = cfg.contains("trophism_cost")                ? cfg["trophism_cost"].cast<float>()                : 0.0f;
     sociality_cost               = cfg.contains("sociality_cost")               ? cfg["sociality_cost"].cast<float>()               : 0.0f;
 
@@ -97,7 +95,15 @@ Simulation::Simulation(py::dict cfg,
     // Seed the simulation with a single ancestor
     agents[key(start_i, start_j)] = Agent::create_live_default();
     live.push_back({start_i, start_j});
-    live_set.insert(key(start_i, start_j));
+
+    // Register ancestor as species 1 — all subsequent speciation events
+    // are detected at birth by comparing against this growing list.
+    total_speciation_events = 1;
+    std::array<float,9> anc;
+    for (int k = 0; k < 9; ++k) anc[k] = Agent::ANCESTOR[k];
+    species_reps.push_back(anc);
+    species_ids .push_back(1);
+    agents[key(start_i, start_j)].species = 1;
 }
 
 // ── Food helpers ──────────────────────────────────────────────────────────────
@@ -265,14 +271,14 @@ void Simulation::compute_agent_update(int live_idx, int current_step,
             if (occupant.alive) {
                 if (!enable_predation) continue;
                 float trophism_diff = a.trophism - occupant.trophism;
-                if (trophism_diff <= predation_threshold) continue;
+                if (trophism_diff <= 0.0f) continue;
 
                 // Movement predation: atomically claim occupant.
                 int old = prey_claim_step[key(ni, nj)].exchange(
                               current_step, std::memory_order_acq_rel);
                 if (old == current_step) continue;
 
-                float steal_frac = a.trophism * predation_efficiency
+                float steal_frac = trophism_diff * predation_efficiency
                                  / (1.0f + (occupant.strength + occupant.hardiness) * predation_resistance);
                 a.consume_food(occupant.energy_reserves * steal_frac);
 
@@ -314,9 +320,10 @@ void Simulation::compute_agent_update(int live_idx, int current_step,
         if (newborn.hardiness <= static_cast<float>(LEVEL_DIFF[world[key(birth_ni, birth_nj)]])) {
             out.d_exposure = 1;   // newborn dies on exposure — no birth queued
         } else {
-            out.has_birth = true;
-            out.birth_i = birth_ni;  out.birth_j = birth_nj;
-            out.newborn = newborn;
+            out.has_birth      = true;
+            out.birth_i        = birth_ni;  out.birth_j = birth_nj;
+            out.newborn        = newborn;
+            out.parent_species = a.species;
         }
     }
 }
@@ -325,9 +332,9 @@ void Simulation::compute_agent_update(int live_idx, int current_step,
 //
 // Applies predation damage, merges death counters, resolves cell conflicts via
 // the same predation/competition rules as before, and writes results to agents_next.
-// Rebuilds live / live_set from the final placement results.
+// Rebuilds live from the final placement results.
 
-void Simulation::resolve_placements(std::vector<AgentUpdate>& updates, StepResult& res)
+void Simulation::resolve_placements(std::vector<AgentUpdate>& updates, StepResult& res, int current_step)
 {
     // Step 0: Clear previous live positions from the write buffer so stale
     // agents from the prior step don't linger in cells no new agent claims.
@@ -397,7 +404,7 @@ void Simulation::resolve_placements(std::vector<AgentUpdate>& updates, StepResul
         if (upd.has_birth) {
             int c = key(upd.birth_i, upd.birth_j);
             if (cell_queue[c].empty()) queued_cells.push_back(c);
-            cell_queue[c].push_back({upd.newborn, true});
+            cell_queue[c].push_back({upd.newborn, true, upd.parent_species});
         }
     }
 
@@ -405,7 +412,6 @@ void Simulation::resolve_placements(std::vector<AgentUpdate>& updates, StepResul
     // Each cell with multiple claimants runs a tournament using the same
     // predation / competition rules as the original try_birth().
     live.clear();
-    live_set.clear();
 
     for (int c : queued_cells) {
         auto& queue = cell_queue[c];
@@ -418,8 +424,8 @@ void Simulation::resolve_placements(std::vector<AgentUpdate>& updates, StepResul
             Agent& current = queue[winner_idx].agent;
             float trophism_diff = chall.trophism - current.trophism;
 
-            if (enable_predation && trophism_diff > predation_threshold) {
-                float steal_frac = chall.trophism * predation_efficiency
+            if (enable_predation && trophism_diff > 0.0f) {
+                float steal_frac = trophism_diff * predation_efficiency
                                  / (1.0f + (current.strength + current.hardiness) * predation_resistance);
                 chall.consume_food(current.energy_reserves * steal_frac);
                 winner_idx = q;
@@ -434,9 +440,11 @@ void Simulation::resolve_placements(std::vector<AgentUpdate>& updates, StepResul
             }
         }
 
-        agents_next[c] = queue[winner_idx].agent;
-        live    .push_back({ci, cj});
-        live_set.insert(c);
+        Agent& winner = queue[winner_idx].agent;
+        if (queue[winner_idx].is_birth)
+            check_speciation(winner, queue[winner_idx].parent_species, current_step);
+        agents_next[c] = winner;
+        live.push_back({ci, cj});
         queue.clear();
     }
     queued_cells.clear();
@@ -448,51 +456,70 @@ void Simulation::resolve_placements(std::vector<AgentUpdate>& updates, StepResul
 
 // ── Speciation ────────────────────────────────────────────────────────────────
 
-// Greedy nearest-representative clustering in 9D genome space.
-// Uses squared distances throughout — avoids sqrt in the O(P×S) inner loop.
-void Simulation::classify_species() {
+// Called at birth. Checks if the newborn's genome is outside speciation_threshold
+// of all known species — if so, registers a new speciation event. O(S) per birth,
+// amortised O(1) per step since most births don't trigger a new species.
+void Simulation::check_speciation(Agent& a, int parent_species, int current_step) {
     const float threshold_sq = speciation_threshold * speciation_threshold;
-    std::vector<std::array<float,9>> rep_genomes;
-    std::vector<int>                 rep_labels;
-    int species_counter = 1;
+    float best_dist_sq = std::numeric_limits<float>::max();
+    int   best_species  = 1;
+
+    for (int s = 0; s < (int)species_reps.size(); ++s) {
+        float d = 0.0f;
+        for (int k = 0; k < 9; ++k) {
+            float diff = a.genome[k] - species_reps[s][k];
+            d += diff * diff;
+        }
+        if (d < best_dist_sq) { best_dist_sq = d; best_species = species_ids[s]; }
+    }
+
+    if (best_dist_sq >= threshold_sq) {
+        ++total_speciation_events;
+        std::array<float,9> g;
+        for (int k = 0; k < 9; ++k) g[k] = a.genome[k];
+        species_reps.push_back(g);
+        species_ids .push_back(total_speciation_events);
+        a.species = total_speciation_events;
+        speciation_log.push_back({parent_species, total_speciation_events, current_step});
+    } else {
+        a.species = best_species;
+    }
+}
+
+// Prune species whose representative genome has no live agent within threshold.
+// Keeps S bounded so check_speciation stays fast. Call periodically, not every step.
+void Simulation::cull_extinct_species() {
+    const float threshold_sq = speciation_threshold * speciation_threshold;
+    std::vector<bool> has_member(species_reps.size(), false);
 
     for (auto& [i, j] : live) {
-        Agent& a = at(i, j);
-        if (!a.alive) continue;
-
-        bool assigned = false;
-        if (!rep_genomes.empty()) {
-            float best_dist_sq = std::numeric_limits<float>::max();
-            int   best_idx     = -1;
-            for (int s = 0; s < static_cast<int>(rep_genomes.size()); ++s) {
-                float d = 0.0f;
-                for (int k = 0; k < 9; ++k) {
-                    float diff = a.genome[k] - rep_genomes[s][k];
-                    d += diff * diff;
-                }
-                if (d < best_dist_sq) { best_dist_sq = d; best_idx = s; }
+        const Agent& a = at(i, j);
+        for (int s = 0; s < (int)species_reps.size(); ++s) {
+            if (has_member[s]) continue;
+            float d = 0.0f;
+            for (int k = 0; k < 9; ++k) {
+                float diff = a.genome[k] - species_reps[s][k];
+                d += diff * diff;
             }
-            if (best_dist_sq < threshold_sq) {
-                a.species = rep_labels[best_idx];
-                assigned  = true;
-            }
-        }
-
-        if (!assigned) {
-            a.species = species_counter;
-            std::array<float,9> g;
-            for (int k = 0; k < 9; ++k) g[k] = a.genome[k];
-            rep_genomes.push_back(g);
-            rep_labels .push_back(species_counter);
-            ++species_counter;
+            if (d < threshold_sq) has_member[s] = true;
         }
     }
+
+    std::vector<std::array<float,9>> new_reps;
+    std::vector<int>                 new_ids;
+    for (int s = 0; s < (int)species_reps.size(); ++s) {
+        if (has_member[s]) {
+            new_reps.push_back(species_reps[s]);
+            new_ids .push_back(species_ids [s]);
+        }
+    }
+    species_reps = std::move(new_reps);
+    species_ids  = std::move(new_ids);
 }
 
 // ── Metrics collection ────────────────────────────────────────────────────────
 
 void Simulation::collect_metrics(StepResult& res) const {
-    std::unordered_set<int> species_set;
     for (auto& [i, j] : live) {
         const Agent& a = at(i, j);
         if (!a.alive) continue;
@@ -507,9 +534,8 @@ void Simulation::collect_metrics(StepResult& res) const {
         res.total_kin_attraction  += a.kin_attraction;
         res.total_threat_response += a.threat_response;
         ++res.population_count;
-        species_set.insert(a.species);
     }
-    res.species_counts = static_cast<int>(species_set.size());
+    res.species_counts = total_speciation_events;
 }
 
 // ── Main step ─────────────────────────────────────────────────────────────────
@@ -533,16 +559,30 @@ StepResult Simulation::step(int current_step) {
     }
 
     // ── Phase 2: Sequential — resolve conflicts, write agents_next ────────────
-    resolve_placements(updates, res);
+    resolve_placements(updates, res, current_step);
 
     // Swap buffers: agents_next becomes the new read state.
     std::swap(agents, agents_next);
 
-    // classify_species and collect_metrics read agents[] (new state) via live[].
-    classify_species();
+    // Periodically prune extinct species reps to keep check_speciation fast.
+    if (current_step % 100 == 0) cull_extinct_species();
     collect_metrics(res);
     res.extinct = live.empty();
     return res;
+}
+
+// ── Phylogenetic tree export ───────────────────────────────────────────────────
+
+py::list Simulation::get_speciation_log() const {
+    py::list out;
+    for (const auto& e : speciation_log) {
+        py::dict row;
+        row["parent_species"] = e.parent_species;
+        row["child_species"]  = e.child_species;
+        row["step"]           = e.step;
+        out.append(row);
+    }
+    return out;
 }
 
 // ── Frame extraction ──────────────────────────────────────────────────────────

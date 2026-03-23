@@ -1,10 +1,8 @@
-import csv
-
-from genes import GENES, column_name
+from genes import GENES
 
 
 class SimulationMetrics:
-    """Accumulates per-step simulation statistics.
+    """Accumulates per-step simulation statistics for terminal display.
 
     Death counts are running totals that never reset. Trait totals and
     population_count reset each step after averages are calculated.
@@ -28,47 +26,6 @@ class SimulationMetrics:
         for attr, *_ in GENES:
             setattr(self, f"total_{attr}", 0)
             setattr(self, f"average_{attr}", 0)
-
-        self.csv_logging_enabled = False
-
-    def enable_csv_logging(self, filepath):
-        self.csv_logging_enabled = True
-        self.filepath = filepath
-        self.fields = (
-            ["Timestep", "Population Count", "Cumulative Deaths",
-             "Deaths from Aging", "Deaths from Competition",
-             "Deaths from Starvation", "Deaths from Exposure", "Deaths from Predation",
-             "Average Age"]
-            + [column_name(attr) for attr, *_ in GENES]
-            + ["Number of Species"]
-        )
-        # Line-buffered so data reaches disk incrementally, not all at the end.
-        self.csv_file = open(self.filepath, "w", newline="", buffering=1)
-        self.writer = csv.DictWriter(self.csv_file, fieldnames=self.fields)
-        self.writer.writeheader()
-
-    def log_metrics(self, timestep):
-        if not self.csv_logging_enabled:
-            return
-        row = {
-            "Timestep": timestep,
-            "Population Count": self.population_count,
-            "Cumulative Deaths": self.cumulative_deaths,
-            "Deaths from Aging": self.deaths_from_aging,
-            "Deaths from Competition": self.death_from_competition,
-            "Deaths from Starvation": self.deaths_from_starvation,
-            "Deaths from Exposure": self.deaths_from_exposure,
-            "Deaths from Predation": self.deaths_from_predation,
-            "Average Age": self.average_age,
-            "Number of Species": self.species_counts,
-        }
-        for attr, *_ in GENES:
-            row[column_name(attr)] = getattr(self, f"average_{attr}")
-        self.writer.writerow(row)
-
-    def close_csv_logging(self):
-        if self.csv_logging_enabled:
-            self.csv_file.close()
 
     def calculate_averages(self):
         population = max(self.population_count, 1)

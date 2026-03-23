@@ -28,7 +28,6 @@ void Agent::kill() {
     energy_reserves        = 0.0f;
     genetic_distance       = 0.0f;
     species                = 0;
-    last_step_acted        = -1;
     lifespan               = 0.0f;
     hardiness              = 0.0f;
     strength               = 0.0f;

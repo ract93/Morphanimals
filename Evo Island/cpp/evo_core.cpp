@@ -41,5 +41,7 @@ PYBIND11_MODULE(evo_core, m) {
         .def("get_attribute_matrix", &Simulation::get_attribute_matrix,
              py::arg("attr"),
              "Return an (N,N) or (N,N,3) numpy array for a named agent attribute.")
+        .def("get_speciation_log",   &Simulation::get_speciation_log,
+             "Return list of {parent_species, child_species, step} dicts — one per speciation event.")
         .def("is_extinct",           &Simulation::is_extinct);
 }

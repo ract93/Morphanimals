@@ -1,10 +1,11 @@
 # Single source of truth for gene trait definitions.
 #
 # Adding a gene here automatically updates:
-#   - Video rendering  (visualization.py reads VIDEO_SPECS)
-#   - Metrics tracking (metrics.py reads GENES for total_*/average_* fields and CSV columns)
+#   - Video rendering  (visualize.py reads VIDEO_SPECS)
+#   - Metrics tracking (metrics.py reads GENES for total_*/average_* fields)
+#   - HDF5 output      (output.py reads GENES to build METRIC_COLUMNS)
 #   - Simulation loop  (simulation.py reads GENES to copy StepResult totals)
-#   - Notebooks        (auto-discover "Average *" columns from the CSV — no changes needed)
+#   - Notebooks        (auto-discover "Average *" columns from HDF5 — no changes needed)
 #
 # The only other required changes when adding a gene are in C++:
 #   agent.h / agent.cpp     — add decoded trait, expand genome array
@@ -21,9 +22,9 @@ GENES = [
     ("metabolism",             "inferno",   0,   100),
     ("reproduction_threshold", "magma",     0,    50),
     ("speed",                  "plasma",    0,    20),
-    ("trophism",               "RdYlGn_r",  0,     1),
-    ("kin_attraction",         "RdBu",     -1,     1),
-    ("threat_response",        "RdBu",     -1,     1),
+    ("trophism",               "hot",        0,     1),
+    ("kin_attraction",         "RdYlGn",   -1,     1),
+    ("threat_response",        "RdYlBu",   -1,     1),
 ]
 
 # Rendered in video/images but not tracked as per-step averages in metrics.
@@ -40,7 +41,7 @@ def _video_filename(name):
     return f"{name}_map.mp4"
 
 
-# Full video spec consumed by visualization.py: [(name, cmap, vmin, vmax, filename), ...]
+# Full video spec consumed by visualize.py: [(name, cmap, vmin, vmax, filename), ...]
 VIDEO_SPECS = [
     (name, cmap, vmin, vmax, _video_filename(name))
     for name, cmap, vmin, vmax in GENES + _DISPLAY_ONLY

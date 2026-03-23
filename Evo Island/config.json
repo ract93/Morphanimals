@@ -1,6 +1,6 @@
 {
     "experimental_trials": 1,
-    "simulation_steps": 2000,
+    "simulation_steps": 40,
 
     "map_size": 3000,
     "map_type": "perlin",
@@ -23,7 +23,6 @@
     "movement_cost": 0.1,
     "predation_efficiency": 0.6,
     "predation_resistance": 0.02,
-    "predation_threshold": 0.3,
     "trophism_cost": 0.05,
     "sociality_cost": 0.02,
 

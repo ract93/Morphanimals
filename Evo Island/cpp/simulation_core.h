@@ -3,7 +3,6 @@
 #include <atomic>
 #include <memory>
 #include <string>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 #include <pybind11/numpy.h>
@@ -39,10 +38,18 @@ struct StepResult {
     double total_threat_response = 0.0;
 };
 
+// One node in the phylogenetic tree — recorded each time a new species emerges.
+struct SpeciationEvent {
+    int parent_species;
+    int child_species;
+    int step;
+};
+
 // Placement request written into the per-cell queue during Phase 2.
 struct PlacementReq {
     Agent agent;
     bool  is_birth;
+    int   parent_species = 0;
 };
 
 // Output of Phase 1 (parallel) per-agent computation.
@@ -58,9 +65,10 @@ struct AgentUpdate {
     int   dst_i = -1, dst_j = -1;
     Agent result;             // agent state after self-processing
     // Birth
-    bool  has_birth  = false;
+    bool  has_birth      = false;
     int   birth_i = -1, birth_j = -1;
     Agent newborn;
+    int   parent_species = 0;
     // Predation this agent performed on a neighbour
     bool  has_prey    = false;
     int   prey_i  = -1, prey_j  = -1;
@@ -83,6 +91,7 @@ public:
 
     StepResult          step(int current_step);
     py::array_t<float>  get_attribute_matrix(const std::string& attr) const;
+    py::list            get_speciation_log() const;
     bool                is_extinct() const { return live.empty(); }
 
 private:
@@ -94,7 +103,6 @@ private:
     std::vector<int>   food_last;
 
     std::vector<std::pair<int,int>> live;     // positions of all live agents (rebuilt each step)
-    std::unordered_set<int>         live_set; // i*N+j keys for O(1) membership (rebuilt each step)
 
     std::mt19937 rng;
     std::vector<std::mt19937> thread_rngs;   // one per OpenMP thread, seeded from rng
@@ -108,11 +116,19 @@ private:
     std::vector<std::vector<PlacementReq>> cell_queue;
     std::vector<int>                       queued_cells;
 
+    // Speciation tracking — event-driven, checked only at birth.
+    // species_reps holds one representative genome per known species;
+    // total_speciation_events is a monotonically increasing counter.
+    std::vector<std::array<float,9>> species_reps;
+    std::vector<int>                 species_ids;
+    int                              total_speciation_events = 0;
+    std::vector<SpeciationEvent>     speciation_log;
+
     // Pre-allocated per-step buffers — avoids heap churn each step.
     std::vector<AgentUpdate> updates;         // resized to live.size() each step
 
-    // Flat cell→live-index map for resolve_placements, replacing the per-step
-    // unordered_map. Entries are -1 when unused; reset lazily via dirty list.
+    // Flat cell→live-index map for resolve_placements.
+    // Entries are -1 when unused; reset lazily via dirty list.
     std::vector<int> cell_to_idx;
     std::vector<int> cell_to_idx_dirty;
 
@@ -141,7 +157,6 @@ private:
     float movement_cost;
     float predation_efficiency;
     float predation_resistance;
-    float predation_threshold;
     float trophism_cost;
     float sociality_cost;
 
@@ -160,11 +175,12 @@ private:
     void compute_agent_update(int live_idx, int current_step,
                               AgentUpdate& out, std::mt19937& rng_t);
 
-    // Phase 2: resolve all AgentUpdates into agents_next; rebuild live/live_set.
-    void resolve_placements(std::vector<AgentUpdate>& updates, StepResult& res);
+    // Phase 2: resolve all AgentUpdates into agents_next; rebuild live.
+    void resolve_placements(std::vector<AgentUpdate>& updates, StepResult& res, int current_step);
 
     float get_available_food(int i, int j, int step) const;
     void  deplete_cell_food(int i, int j, int step, float consumed);
-    void  classify_species();
+    void  check_speciation(Agent& a, int parent_species, int current_step);
+    void  cull_extinct_species();          // periodic — prunes dead species reps
     void  collect_metrics(StepResult& res) const;
 };
